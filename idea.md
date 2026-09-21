@@ -218,7 +218,7 @@ Suppose a source states:
 
 > The researchers exposed mice to compound A, after which inflammatory markers decreased.
 
-If the ontology contains the concepts `ExperimentalSubject`, `Intervention`, `ChemicalCompound`, `Biomarker`, and `Decrease`, the normalized representation might resemble:
+If the ontology contains the concepts *ExperimentalSubject*, *Intervention*, *ChemicalCompound*, *Biomarker*, and *Decrease*, the normalized representation might resemble:
 
 > ExperimentalSubjects are mice.
 > ChemicalCompound A is used as an Intervention on the ExperimentalSubjects.
@@ -228,7 +228,7 @@ The exact controlled language remains a design question. What matters is that no
 
 OWL provides a formal distinction among classes, properties, individuals, and data values, and its ontology model explicitly supports assertions involving individuals and their relationships. This distinction motivates keeping ontology concepts separate from document-specific instances in the proposed representation.
 
-For example, `Mouse` may be an ontology class while `experimental_group_1` is an instance described by the paper. Similarly, `Treatment` can be an ontology category while `compound_A_administration_1` denotes a particular intervention described in the document.
+For example, *Mouse* may be an ontology class while *experimental_group_1* is an instance described by the paper. Similarly, *Treatment* can be an ontology category while *compound_A_administration_1* denotes a particular intervention described in the document.
 
 ---
 
@@ -775,43 +775,43 @@ The sixth concerns provenance. The architecture should determine how much source
 The resulting architecture can be summarized as:
 
 ```text
-                         ┌───────────────┐
-                         │   Ontology    │
-                         └───────┬───────┘
-                                 │
-                    conditioning│constraints
-                                 │
-                                 ▼
-Document
-   │
-   ▼
-Structural / semantic segmentation
-   │
-   ▼
-Coherent text chunks
-   │
-   ▼
-Information-preserving summarization
-   │
-   ▼
-Ontology-conditioned semantic normalization
-   │
-   ▼
-Atomic proposition decomposition
-   │
-   ▼
-Constrained triple construction
-   │
-   ▼
-Local graphs
-   │
-   ├──────── document-level context
-   │
-   ▼
-Entity resolution and graph integration
-   │
-   ▼
-Ontology-grounded document graph
+                           ┌───────────────┐
+                           │   Ontology    │
+                           └───────┬───────┘
+                                   │
+                       conditioning│constraints
+                                   │
+                                   ▼
+                                Document
+                                   │
+                                   ▼
+                                Structural / semantic segmentation
+                                   │
+                                   ▼
+                                Coherent text chunks
+                                   │
+                                   ▼
+                                Information-preserving summarization
+                                   │
+                                   ▼
+                                Ontology-conditioned semantic normalization
+                                   │
+                                   ▼
+                                Atomic proposition decomposition
+                                   │
+                                   ▼
+                                Constrained triple construction
+                                   │
+                                   ▼
+                                Local graphs
+                                   │
+                                   ├──────── document-level context
+                                   │
+                                   ▼
+                                Entity resolution and graph integration
+                                   │
+                                   ▼
+                                Ontology-grounded document graph
 ```
 
 A parallel provenance path should retain mappings from every final graph assertion back to its supporting source span.
@@ -845,7 +845,6 @@ Rather than interpreting graph extraction as a large collection of independent q
 The central pipeline is:
 
 $$
-\boxed{
 \text{Document}
 \rightarrow
 \text{Segmentation}

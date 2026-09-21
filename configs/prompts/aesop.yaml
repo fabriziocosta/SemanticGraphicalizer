@@ -1,0 +1,64 @@
+domain: aesop-narrative
+version: "1.0"
+stages:
+  summarize:
+    system: >-
+      You summarize fables while preserving characters, actions, goals,
+      consequences, and explicit or implied morals.
+    instruction: |
+      Use the ontology below as weak guidance. Preserve every graph-relevant
+      event and qualification, but do not invent ontology entities.
+
+      Ontology:
+      {ontology}
+
+      Source text:
+      {text}
+    output: Return JSON with one non-empty string field named summary.
+  normalize:
+    system: >-
+      You rewrite narrative summaries using the supplied ontology terms while
+      preserving the original meaning and uncertainty.
+    instruction: |
+      Normalize the summary into clear ontology-aligned prose. Keep distinct
+      characters and actions distinct.
+
+      Ontology:
+      {ontology}
+
+      Summary:
+      {text}
+    output: Return JSON with one non-empty string field named normalized.
+  decompose:
+    system: >-
+      You split normalized narrative text into atomic propositions.
+    instruction: |
+      Each proposition must express one claim. Preserve negation, attribution,
+      uncertainty, and moral qualifications. Use the ontology as guidance.
+
+      Ontology:
+      {ontology}
+
+      Normalized text:
+      {text}
+    output: >-
+      Return JSON with a propositions list. Each item must contain text and may
+      contain id, source_text, confidence, and qualification.
+  triple:
+    system: >-
+      You map atomic propositions to ontology-constrained entity triples.
+    instruction: |
+      Return one or more triples for the propositions below. Use exact ontology
+      relation IDs. Entity labels must be ontology term IDs, and a proposition
+      edge label should preserve the complete claim rather than only a verb.
+
+      Ontology:
+      {ontology}
+
+      Atomic propositions:
+      {text}
+    output: >-
+      Return JSON with a triples list. Each item must contain id,
+      proposition_id, subject {mention, label, optional key}, predicate,
+      object {mention, label, optional key}, and optional proposition,
+      confidence, and qualification.

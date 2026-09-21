@@ -1,0 +1,50 @@
+name: aesop-narrative
+version: "1.0"
+terms:
+  - id: Character
+    description: An entity that participates in a narrative.
+  - id: Animal
+    description: A non-human animal character or animal entity.
+  - id: Human
+    description: A human character or human entity.
+  - id: Object
+    description: A physical or symbolic object in the tale.
+  - id: Place
+    description: A location or setting in the tale.
+  - id: Action
+    description: An event or action performed by an entity.
+  - id: Goal
+    description: A desired outcome or intention of a character.
+  - id: Trait
+    description: A characteristic attributed to a character.
+  - id: Moral
+    description: An explicit or inferred lesson of the tale.
+relations:
+  - id: interacts_with
+    description: A character or entity interacts with another entity.
+    source_terms: [Character, Animal, Human, Object]
+    target_terms: [Character, Animal, Human, Object]
+  - id: performs
+    description: An entity performs an action.
+    source_terms: [Character, Animal, Human]
+    target_terms: [Action]
+  - id: wants
+    description: A character has a goal or desire.
+    source_terms: [Character, Animal, Human]
+    target_terms: [Goal]
+  - id: located_in
+    description: An entity or action occurs in a place.
+    source_terms: [Character, Animal, Human, Action]
+    target_terms: [Place]
+  - id: has_trait
+    description: A character is described as having a trait.
+    source_terms: [Character, Animal, Human]
+    target_terms: [Trait]
+  - id: causes
+    description: An action or entity causes an outcome or event.
+    source_terms: [Action, Character, Animal, Human]
+    target_terms: [Action, Goal, Trait]
+  - id: teaches
+    description: A tale or narrative element conveys a moral.
+    source_terms: [Character, Action, Moral]
+    target_terms: [Moral]
