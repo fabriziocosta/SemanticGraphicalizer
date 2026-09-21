@@ -29,7 +29,7 @@ def graph_to_d3_data(
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
     show_source: bool = True,
-) -> dict[str, list[dict[str, str]]]:
+) -> dict[str, list[dict[str, Any]]]:
     """Convert a graph or trace into D3 data with ontology and source labels."""
 
     graph = _graph_from_value(value)
@@ -47,14 +47,33 @@ def graph_to_d3_data(
             return "; ".join(str(mention) for mention in mentions if mention)
         return str(mentions) if mentions else ""
 
+    node_items = list(graph.nodes(data=True))
+    sequence_by_node = {
+        node_id: data.get("sequence", index)
+        if isinstance(data.get("sequence", index), (int, float))
+        else index
+        for index, (node_id, data) in enumerate(node_items)
+    }
+    components = list(nx.connected_components(graph.to_undirected()))
+    components.sort(key=lambda component: min(sequence_by_node[node] for node in component))
+    component_info: dict[Any, tuple[int, int, int]] = {}
+    for component_order, component in enumerate(components):
+        ordered_nodes = sorted(component, key=lambda node: (sequence_by_node[node], str(node)))
+        for component_index, node_id in enumerate(ordered_nodes):
+            component_info[node_id] = (component_order, component_index, len(ordered_nodes))
+
     nodes = [
         {
             "id": str(node_id),
             "label": combined_label(data.get(node_label_attr, node_id), node_source(data)),
             "ontology_label": str(data.get(node_label_attr, node_id)),
             "source_fragment": node_source(data),
+            "sequence": sequence_by_node[node_id],
+            "component_order": component_info[node_id][0],
+            "component_index": component_info[node_id][1],
+            "component_size": component_info[node_id][2],
         }
-        for node_id, data in graph.nodes(data=True)
+        for node_id, data in node_items
     ]
     if graph.is_multigraph():
         edges = graph.edges(data=True, keys=True)
@@ -129,7 +148,7 @@ def graph_to_d3_html(
     .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and ontology relation IDs as edge labels.");
+  svg.append("desc").text("A force-directed graph with ontology terms and surface mentions as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.");
 
   const link = svg.append("g")
     .attr("aria-hidden", "true")
@@ -149,6 +168,20 @@ def graph_to_d3_html(
     .attr("text-anchor", "middle")
     .attr("dy", -4)
     .text(d => d.label);
+
+  const nodeRadius = d => Math.max(42, Math.min(180, d.label.length * 3.8));
+  const componentValues = [...new Set(data.nodes.map(d => d.component_order))].sort((a, b) => a - b);
+  const componentScale = d3.scalePoint()
+    .domain(componentValues)
+    .range([90, width - 90])
+    .padding(0.5);
+  const componentTarget = d => {{
+    const center = componentScale(d.component_order) ?? width / 2;
+    const slots = Math.max(1, d.component_size - 1);
+    const local = (d.component_index / slots - 0.5)
+      * Math.min(140, width / Math.max(2 * componentValues.length, 1));
+    return center + local;
+  }};
 
   const node = svg.append("g")
     .selectAll("text")
@@ -178,9 +211,10 @@ def graph_to_d3_html(
 
   const simulation = d3.forceSimulation(data.nodes)
     .force("link", d3.forceLink(data.links).id(d => d.id).distance(150).strength(0.65))
-    .force("charge", d3.forceManyBody().strength(-280))
+    .force("charge", d3.forceManyBody().strength(-420))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide().radius(48))
+    .force("component-order", d3.forceX(componentTarget).strength(0.8))
+    .force("collision", d3.forceCollide().radius(nodeRadius).strength(1).iterations(4))
     .on("tick", () => {{
       link
         .attr("x1", d => d.source.x)
@@ -243,7 +277,7 @@ def graph_to_d3_javascript(
     .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and ontology relation IDs as edge labels.");
+  svg.append("desc").text("A force-directed graph with ontology terms and surface mentions as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.");
 
   const link = svg.append("g")
     .attr("aria-hidden", "true")
@@ -263,6 +297,20 @@ def graph_to_d3_javascript(
     .attr("text-anchor", "middle")
     .attr("dy", -4)
     .text(d => d.label);
+
+  const nodeRadius = d => Math.max(42, Math.min(180, d.label.length * 3.8));
+  const componentValues = [...new Set(data.nodes.map(d => d.component_order))].sort((a, b) => a - b);
+  const componentScale = d3.scalePoint()
+    .domain(componentValues)
+    .range([90, width - 90])
+    .padding(0.5);
+  const componentTarget = d => {{
+    const center = componentScale(d.component_order) ?? width / 2;
+    const slots = Math.max(1, d.component_size - 1);
+    const local = (d.component_index / slots - 0.5)
+      * Math.min(140, width / Math.max(2 * componentValues.length, 1));
+    return center + local;
+  }};
 
   let simulation;
   const node = svg.append("g")
@@ -293,9 +341,10 @@ def graph_to_d3_javascript(
 
   simulation = d3.forceSimulation(data.nodes)
     .force("link", d3.forceLink(data.links).id(d => d.id).distance(150).strength(0.65))
-    .force("charge", d3.forceManyBody().strength(-280))
+    .force("charge", d3.forceManyBody().strength(-420))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide().radius(48))
+    .force("component-order", d3.forceX(componentTarget).strength(0.8))
+    .force("collision", d3.forceCollide().radius(nodeRadius).strength(1).iterations(4))
     .on("tick", () => {{
       link
         .attr("x1", d => d.source.x)
@@ -335,14 +384,26 @@ def graph_to_static_svg(
     )
     node_items = list(graph.nodes(data=True))
     positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
+    display_nodes = {item["id"]: item for item in display_data["nodes"]}
+    display_links = display_data["links"]
+    component_count = max(
+        (int(item["component_order"]) for item in display_data["nodes"]),
+        default=-1,
+    ) + 1
     margin = 48
     usable_width = max(width - 2 * margin, 1)
     usable_height = max(height - 2 * margin, 1)
 
     def point(node_id: Any) -> tuple[float, float]:
         x, y = positions[node_id]
+        node_data = display_nodes[str(node_id)]
+        band_width = usable_width / max(component_count, 1)
+        slots = max(1, int(node_data["component_size"]) - 1)
+        local_x = (
+            int(node_data["component_index"]) / slots - 0.5
+        ) * min(140.0, band_width * 0.7)
         return (
-            margin + (float(x) + 1.0) * usable_width / 2.0,
+            margin + (int(node_data["component_order"]) + 0.5) * band_width + local_x,
             margin + (1.0 - (float(y) + 1.0) / 2.0) * usable_height,
         )
 
@@ -362,7 +423,7 @@ def graph_to_static_svg(
             '<path d="M0,0 L8,4 L0,8 z" fill="#9aa0a6" /></marker></defs>'
         )
 
-    for source, target, data in edge_items:
+    for edge_index, (source, target, _data) in enumerate(edge_items):
         x1, y1 = point(source)
         x2, y2 = point(target)
         marker = ' marker-end="url(#semantic-graphicalizer-arrow)"' if graph.is_directed() else ""
@@ -370,7 +431,7 @@ def graph_to_static_svg(
             f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
             f'stroke="#9aa0a6" stroke-width="1" stroke-opacity="0.85"{marker} />'
         )
-        label = data.get(edge_label_attr, "")
+        label = display_links[edge_index]["label"]
         if label:
             elements.append(
                 f'<text x="{(x1 + x2) / 2:.2f}" y="{(y1 + y2) / 2 - 4:.2f}" '
@@ -379,9 +440,9 @@ def graph_to_static_svg(
                 f"{xml_text(label)}</text>"
             )
 
-    for node_id, data in node_items:
+    for node_id, _data in node_items:
         x, y = point(node_id)
-        label = data.get(node_label_attr, node_id)
+        label = display_nodes[str(node_id)]["label"]
         elements.append(
             f'<text x="{x:.2f}" y="{y:.2f}" fill="currentColor" font-size="13" '
             'font-weight="500" text-anchor="middle" dominant-baseline="central" '
@@ -393,8 +454,8 @@ def graph_to_static_svg(
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{int(height)}" '
         f'viewBox="0 0 {int(width)} {int(height)}" role="img" aria-label="Ontology graph">'
         '<title>Ontology graph</title>'
-        '<desc>A deterministic Kamada-Kawai graph with ontology terms as text-only nodes '
-        'and ontology relation IDs as edge labels.</desc>'
+        '<desc>A deterministic Kamada-Kawai graph with ontology terms and surface mentions '
+        'as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.</desc>'
         + "".join(elements)
         + "</svg>"
     )

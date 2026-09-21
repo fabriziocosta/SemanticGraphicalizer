@@ -27,6 +27,8 @@ Nodes store the ontology term in `node["label"]`. Nodes and edges also carry
 `document_id` and the original `document_text`; chunk-level excerpts remain in
 their provenance fields. Edges store the complete proposition in
 `edge["label"]`, while `edge["predicate"]` contains the ontology relation ID.
+Nodes carry a first-seen `sequence`; visual layouts order disconnected
+components from left to right by the earliest node sequence in the document.
 `transform_with_trace` exposes all intermediate stages and provenance.
 
 Install the package and development tools with Python 3.12:
@@ -59,9 +61,10 @@ graphicalizer.display(graphs[0], mode="dynamic")
 graphicalizer.display(graphs[0], mode="static")
 ```
 
-The default view uses ontology IDs as text-only nodes, ontology relation IDs on
-thin gray edges, and no filled node circles. Pass `edge_label_attr="label"` when
-you want the full proposition text instead.
+The default view shows both values: ontology IDs plus surface mentions on
+text-only nodes, and ontology relation IDs plus proposition fragments on thin
+gray edges. Use `show_source=False` to display only ontology IDs and relation
+IDs.
 
 Progress reporting is enabled by default. Set `verbose=False` to suppress it;
 stage timings and counts remain available on each `DocumentTrace.stats` item

@@ -6,6 +6,8 @@
 
 ## Done
 
+- Added first-seen node sequence metadata and component-aware layout forces: disconnected components now read left-to-right in story order, with label-aware collision spacing; 24 tests pass. [2026-09-21 12:20]
+- Updated dynamic and static labels to show both ontology IDs and source text: `Animal — fox` for nodes and `interacts_with — proposition fragment` for edges; `show_source=False` hides the source portions. [2026-09-21 12:05]
 - Changed visualization edge labels to default to ontology relation IDs from `edge["predicate"]`; proposition text remains available via `edge_label_attr="label"`. Added dynamic/static coverage; 23 tests pass. [2026-09-21 11:50]
 - Added `display(mode="dynamic"|"static")`; dynamic remains D3 force-directed, while static emits text-only SVG using NetworkX Kamada-Kawai layout. Added notebook examples and 22 passing tests. [2026-09-21 11:35]
 - Replaced the notebook `DemoModel` with the default OpenAI `gpt-4.1-mini` path, executed the two-story notebook successfully, and constrained live triple schemas to the configured ontology. [2026-09-21 11:20]

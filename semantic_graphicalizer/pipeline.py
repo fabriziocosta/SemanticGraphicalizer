@@ -431,6 +431,7 @@ class SemanticPipeline:
                         node_id,
                         label=entity.ontology_term,
                         canonical_id=node_id,
+                        sequence=graph.number_of_nodes(),
                         document_id=document_id,
                         document_text=document_text,
                         mentions=[],

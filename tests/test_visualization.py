@@ -11,8 +11,8 @@ from semantic_graphicalizer import (
 
 def test_d3_data_uses_node_and_relation_labels() -> None:
     graph = nx.MultiDiGraph()
-    graph.add_node("fox", label="Animal")
-    graph.add_node("crow", label="Animal")
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+    graph.add_node("crow", label="Animal", mentions=["crow"])
     graph.add_edge(
         "fox",
         "crow",
@@ -24,13 +24,33 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
 
     assert data == {
         "nodes": [
-            {"id": "fox", "label": "Animal"},
-            {"id": "crow", "label": "Animal"},
+            {
+                "id": "fox",
+                "label": "Animal — fox",
+                "ontology_label": "Animal",
+                "source_fragment": "fox",
+                "sequence": 0,
+                "component_order": 0,
+                "component_index": 0,
+                "component_size": 2,
+            },
+            {
+                "id": "crow",
+                "label": "Animal — crow",
+                "ontology_label": "Animal",
+                "source_fragment": "crow",
+                "sequence": 1,
+                "component_order": 0,
+                "component_index": 1,
+                "component_size": 2,
+            },
         ],
         "links": [{
             "source": "fox",
             "target": "crow",
-            "label": "interacts_with",
+            "label": "interacts_with — The fox interacts with the crow.",
+            "predicate": "interacts_with",
+            "source_fragment": "The fox interacts with the crow.",
         }],
     }
 
@@ -46,6 +66,8 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert '.selectAll("text")' in html
     assert 'attr("stroke", "#9aa0a6")' in html
     assert 'attr("stroke-width", 1)' in html
+    assert 'force("component-order"' in html
+    assert "nodeRadius" in html
     assert "<circle" not in html
 
 
@@ -60,19 +82,33 @@ def test_display_graph_returns_ipython_html() -> None:
     assert html.lib == ["https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"]
 
 
-def test_visualization_can_explicitly_use_proposition_labels() -> None:
+def test_visualization_can_hide_source_fragments() -> None:
     graph = nx.MultiDiGraph()
     graph.add_edge("fox", "crow", label="The fox interacts with the crow.", predicate="interacts_with")
 
-    data = graph_to_d3_data(graph, edge_label_attr="label")
+    data = graph_to_d3_data(graph, show_source=False)
 
-    assert data["links"][0]["label"] == "The fox interacts with the crow."
+    assert data["links"][0]["label"] == "interacts_with"
+
+
+def test_components_are_ordered_by_first_sequence_position() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("late", label="Animal", mentions=["late"], sequence=3)
+    graph.add_node("early", label="Animal", mentions=["early"], sequence=0)
+    graph.add_edge("late", "late", predicate="causes", label="A late event.")
+    graph.add_edge("early", "early", predicate="causes", label="An early event.")
+
+    data = graph_to_d3_data(graph)
+    by_id = {node["id"]: node for node in data["nodes"]}
+
+    assert by_id["early"]["component_order"] == 0
+    assert by_id["late"]["component_order"] == 1
 
 
 def test_static_display_uses_kamada_kawai_and_text_only_svg() -> None:
     graph = nx.MultiDiGraph()
-    graph.add_node("fox", label="Animal")
-    graph.add_node("action", label="Action")
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+    graph.add_node("action", label="Action", mentions=["an action"])
     graph.add_edge("fox", "action", label="The fox performs an action.", predicate="performs")
 
     svg = graph_to_static_svg(graph)
@@ -82,8 +118,9 @@ def test_static_display_uses_kamada_kawai_and_text_only_svg() -> None:
     assert 'stroke="#9aa0a6"' in svg
     assert '<text' in svg
     assert "Animal" in svg
+    assert "Animal — fox" in svg
     assert "performs" in svg
-    assert "The fox performs an action." not in svg
+    assert "performs — The fox performs an action." in svg
     assert "<circle" not in svg
     assert rendered.data.startswith('<svg xmlns="http://www.w3.org/2000/svg"')
     assert "Kamada-Kawai" in rendered.data
