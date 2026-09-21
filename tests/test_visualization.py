@@ -27,7 +27,7 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
         "nodes": [
             {
                 "id": "fox",
-                "label": "Animal — fox",
+                "label": "Animal\nfox",
                 "ontology_label": "Animal",
                 "source_fragment": "fox",
                 "sequence": 0,
@@ -37,7 +37,7 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
             },
             {
                 "id": "crow",
-                "label": "Animal — crow",
+            "label": "Animal\ncrow",
                 "ontology_label": "Animal",
                 "source_fragment": "crow",
                 "sequence": 1,
@@ -49,7 +49,7 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
         "links": [{
             "source": "fox",
             "target": "crow",
-            "label": "interacts_with — The fox interacts with the crow.",
+            "label": "interacts_with\nThe fox interacts with the crow.",
             "predicate": "interacts_with",
             "source_fragment": "The fox interacts with the crow.",
         }],
@@ -69,7 +69,32 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert 'attr("stroke-width", 1)' in html
     assert 'force("component-order"' in html
     assert "nodeRadius" in html
+    assert "setMultilineText" in html
+    assert ".append(\"tspan\")" in html
     assert "<circle" not in html
+
+
+def test_labels_use_new_lines_and_wrap_at_max_width() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+    graph.add_edge(
+        "fox",
+        "fox",
+        label="The fox interacts with the crow.",
+        predicate="interacts_with",
+    )
+
+    data = graph_to_d3_data(graph, max_width=16)
+
+    assert data["nodes"][0]["label"] == "Animal\nfox"
+    assert data["links"][0]["label"] == (
+        "interacts_with\nThe fox\ninteracts with\nthe crow."
+    )
+
+
+def test_max_width_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_width"):
+        graph_to_d3_data(nx.MultiDiGraph(), max_width=0)
 
 
 def test_display_graph_returns_html_iframe_for_dynamic_mode() -> None:
@@ -83,6 +108,21 @@ def test_display_graph_returns_html_iframe_for_dynamic_mode() -> None:
     assert "data:text/html;charset=utf-8," in rendered_html
     assert "sandbox=\"allow-scripts allow-same-origin\"" in rendered_html
     assert "100%" in rendered_html
+
+
+def test_display_graph_does_not_emit_a_second_notebook_output(monkeypatch) -> None:
+    import IPython.display
+
+    emitted = []
+    monkeypatch.setattr(IPython.display, "display", emitted.append)
+
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal")
+
+    rendered = display_graph(graph)
+
+    assert rendered._repr_html_().startswith("\n        <iframe")
+    assert emitted == []
 
 
 def test_d3_iframe_contains_force_layout_document() -> None:
@@ -132,9 +172,11 @@ def test_static_display_uses_kamada_kawai_and_text_only_svg() -> None:
     assert 'stroke="#9aa0a6"' in svg
     assert '<text' in svg
     assert "Animal" in svg
-    assert "Animal — fox" in svg
+    assert "Animal" in svg
+    assert ">fox</tspan>" in svg
     assert "performs" in svg
-    assert "performs — The fox performs an action." in svg
+    assert "The fox performs an action." in svg
+    assert "<tspan" in svg
     assert "<circle" not in svg
     assert rendered.data.startswith('<svg xmlns="http://www.w3.org/2000/svg"')
     assert "Kamada-Kawai" in rendered.data

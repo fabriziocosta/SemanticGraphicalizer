@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from html import escape
+from textwrap import wrap
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
@@ -13,6 +14,27 @@ import networkx as nx
 
 D3_CDN_URL = "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
 _NETWORKX_GRAPH_TYPES = (nx.Graph, nx.DiGraph, nx.MultiGraph, nx.MultiDiGraph)
+
+
+def _validate_max_width(max_width: int) -> int:
+    if isinstance(max_width, bool) or not isinstance(max_width, int) or max_width < 1:
+        raise ValueError("max_width must be a positive integer")
+    return max_width
+
+
+def _wrap_text(value: Any, max_width: int) -> str:
+    lines: list[str] = []
+    for paragraph in str(value).splitlines() or [""]:
+        lines.extend(
+            wrap(
+                paragraph,
+                width=max_width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            or [""]
+        )
+    return "\n".join(lines)
 
 
 def _graph_from_value(value: Any) -> nx.Graph:
@@ -30,17 +52,19 @@ def graph_to_d3_data(
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
     show_source: bool = True,
+    max_width: int = 80,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Convert a graph or trace into D3 data with ontology and source labels."""
+    """Convert a graph or trace into D3 data with wrapped multiline labels."""
 
     graph = _graph_from_value(value)
+    max_width = _validate_max_width(max_width)
 
     def combined_label(primary: Any, source: Any) -> str:
-        primary_text = str(primary)
-        source_text = str(source) if source else ""
+        primary_text = _wrap_text(primary, max_width)
+        source_text = _wrap_text(source, max_width) if source else ""
         if not show_source or not source_text:
             return primary_text
-        return f"{primary_text} — {source_text}"
+        return f"{primary_text}\n{source_text}"
 
     def node_source(data: dict[str, Any]) -> str:
         mentions = data.get("mentions")
@@ -110,6 +134,7 @@ def graph_to_d3_html(
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
     show_source: bool = True,
+    max_width: int = 80,
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return a self-contained inline HTML fragment containing a D3 graph."""
@@ -126,6 +151,7 @@ def graph_to_d3_html(
             node_label_attr=node_label_attr,
             edge_label_attr=edge_label_attr,
             show_source=show_source,
+            max_width=max_width,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -151,6 +177,22 @@ def graph_to_d3_html(
   svg.append("title").text("Ontology graph");
   svg.append("desc").text("A force-directed graph with ontology terms and surface mentions as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.");
 
+  const setMultilineText = selection => {{
+    selection.each(function(d) {{
+      const lines = String(d.label).split("\\n");
+      const lineHeight = 1.2;
+      const text = d3.select(this);
+      text.selectAll("*").remove();
+      lines.forEach((line, index) => {{
+        text.append("tspan")
+          .attr("dy", index === 0
+            ? `${{-(lines.length - 1) * lineHeight / 2}}em`
+            : `${{lineHeight}}em`)
+          .text(line);
+      }});
+    }});
+  }};
+
   const link = svg.append("g")
     .attr("aria-hidden", "true")
     .selectAll("line")
@@ -168,9 +210,10 @@ def graph_to_d3_html(
     .attr("font-size", 11)
     .attr("text-anchor", "middle")
     .attr("dy", -4)
-    .text(d => d.label);
+    .call(setMultilineText);
 
-  const nodeRadius = d => Math.max(42, Math.min(180, d.label.length * 3.8));
+  const labelWidth = d => Math.max(...String(d.label).split("\\n").map(line => line.length), 1);
+  const nodeRadius = d => Math.max(42, Math.min(180, labelWidth(d) * 3.8));
   const componentValues = [...new Set(data.nodes.map(d => d.component_order))].sort((a, b) => a - b);
   const componentScale = d3.scalePoint()
     .domain(componentValues)
@@ -193,7 +236,7 @@ def graph_to_d3_html(
     .attr("font-weight", 500)
     .attr("text-anchor", "middle")
     .attr("dominant-baseline", "central")
-    .text(d => d.label)
+    .call(setMultilineText)
     .call(d3.drag()
       .on("start", (event, d) => {{
         if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -241,6 +284,7 @@ def graph_to_d3_javascript(
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
     show_source: bool = True,
+    max_width: int = 80,
 ) -> str:
     """Return JavaScript that renders the graph into an IPython output area."""
 
@@ -253,6 +297,7 @@ def graph_to_d3_javascript(
             node_label_attr=node_label_attr,
             edge_label_attr=edge_label_attr,
             show_source=show_source,
+            max_width=max_width,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -280,6 +325,22 @@ def graph_to_d3_javascript(
   svg.append("title").text("Ontology graph");
   svg.append("desc").text("A force-directed graph with ontology terms and surface mentions as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.");
 
+  const setMultilineText = selection => {{
+    selection.each(function(d) {{
+      const lines = String(d.label).split("\\n");
+      const lineHeight = 1.2;
+      const text = d3.select(this);
+      text.selectAll("*").remove();
+      lines.forEach((line, index) => {{
+        text.append("tspan")
+          .attr("dy", index === 0
+            ? `${{-(lines.length - 1) * lineHeight / 2}}em`
+            : `${{lineHeight}}em`)
+          .text(line);
+      }});
+    }});
+  }};
+
   const link = svg.append("g")
     .attr("aria-hidden", "true")
     .selectAll("line")
@@ -297,9 +358,10 @@ def graph_to_d3_javascript(
     .attr("font-size", 11)
     .attr("text-anchor", "middle")
     .attr("dy", -4)
-    .text(d => d.label);
+    .call(setMultilineText);
 
-  const nodeRadius = d => Math.max(42, Math.min(180, d.label.length * 3.8));
+  const labelWidth = d => Math.max(...String(d.label).split("\\n").map(line => line.length), 1);
+  const nodeRadius = d => Math.max(42, Math.min(180, labelWidth(d) * 3.8));
   const componentValues = [...new Set(data.nodes.map(d => d.component_order))].sort((a, b) => a - b);
   const componentScale = d3.scalePoint()
     .domain(componentValues)
@@ -323,7 +385,7 @@ def graph_to_d3_javascript(
     .attr("font-weight", 500)
     .attr("text-anchor", "middle")
     .attr("dominant-baseline", "central")
-    .text(d => d.label)
+    .call(setMultilineText)
     .call(d3.drag()
       .on("start", (event, d) => {{
         if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -370,6 +432,7 @@ def graph_to_d3_iframe(
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
     show_source: bool = True,
+    max_width: int = 80,
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return an HTML iframe that runs the D3 graph in notebook frontends."""
@@ -386,6 +449,7 @@ def graph_to_d3_iframe(
         node_label_attr=node_label_attr,
         edge_label_attr=edge_label_attr,
         show_source=show_source,
+        max_width=max_width,
         d3_url=d3_url,
     )
     return (
@@ -403,6 +467,7 @@ def _graph_to_d3_document(
     node_label_attr: str,
     edge_label_attr: str,
     show_source: bool,
+    max_width: int,
     d3_url: str,
 ) -> str:
     """Build the document used by notebook iframe renderers."""
@@ -417,6 +482,7 @@ def _graph_to_d3_document(
     node_label_attr=node_label_attr,
     edge_label_attr=edge_label_attr,
     show_source=show_source,
+    max_width=max_width,
     d3_url=d3_url,
 )}</body>
 </html>'''
@@ -430,6 +496,7 @@ def graph_to_static_svg(
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
     show_source: bool = True,
+    max_width: int = 80,
 ) -> str:
     """Return an SVG using NetworkX's deterministic Kamada-Kawai layout."""
 
@@ -442,6 +509,7 @@ def graph_to_static_svg(
         node_label_attr=node_label_attr,
         edge_label_attr=edge_label_attr,
         show_source=show_source,
+        max_width=max_width,
     )
     node_items = list(graph.nodes(data=True))
     positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
@@ -476,6 +544,27 @@ def graph_to_static_svg(
     def xml_text(value: Any) -> str:
         return escape(str(value), quote=True)
 
+    def svg_label(
+        x: float,
+        y: float,
+        label: str,
+        *,
+        font_size: float,
+        attributes: str,
+    ) -> str:
+        lines = label.split("\n") or [""]
+        line_height = font_size * 1.2
+        first_dy = -((len(lines) - 1) * line_height) / 2
+        tspans = "".join(
+            f'<tspan x="{x:.2f}" dy="{(first_dy if index == 0 else line_height):.2f}">'
+            f"{xml_text(line)}</tspan>"
+            for index, line in enumerate(lines)
+        )
+        return (
+            f'<text x="{x:.2f}" y="{y:.2f}" {attributes}>'
+            f"{tspans}</text>"
+        )
+
     elements: list[str] = []
     if graph.is_directed():
         elements.append(
@@ -494,21 +583,26 @@ def graph_to_static_svg(
         )
         label = display_links[edge_index]["label"]
         if label:
-            elements.append(
-                f'<text x="{(x1 + x2) / 2:.2f}" y="{(y1 + y2) / 2 - 4:.2f}" '
-                'fill="#6b7280" font-size="11" text-anchor="middle" '
-                'font-family="sans-serif">'
-                f"{xml_text(label)}</text>"
+            elements.append(svg_label(
+                (x1 + x2) / 2,
+                (y1 + y2) / 2 - 4,
+                label,
+                font_size=11,
+                attributes='fill="#6b7280" text-anchor="middle" font-family="sans-serif"',
+            )
             )
 
     for node_id, _data in node_items:
         x, y = point(node_id)
         label = display_nodes[str(node_id)]["label"]
-        elements.append(
-            f'<text x="{x:.2f}" y="{y:.2f}" fill="currentColor" font-size="13" '
-            'font-weight="500" text-anchor="middle" dominant-baseline="central" '
-            'font-family="sans-serif">'
-            f"{xml_text(label)}</text>"
+        elements.append(svg_label(
+            x,
+            y,
+            label,
+            font_size=13,
+            attributes='fill="currentColor" font-weight="500" text-anchor="middle" '
+            'dominant-baseline="central" font-family="sans-serif"',
+        )
         )
 
     return (
@@ -523,7 +617,7 @@ def graph_to_static_svg(
 
 
 def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any) -> Any:
-    """Return and emit a dynamic D3 or static Kamada-Kawai visualization."""
+    """Return a dynamic D3 or static Kamada-Kawai visualization."""
 
     if mode not in {"dynamic", "static"}:
         raise ValueError("mode must be either 'dynamic' or 'static'")
@@ -531,15 +625,13 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
     if mode == "static":
         markup = graph_to_static_svg(value, **kwargs)
         try:
-            from IPython.display import SVG, display as ipython_display
+            from IPython.display import SVG
         except ImportError:  # pragma: no cover - depends on environment
             return markup
-        rendered = SVG(markup)
-        ipython_display(rendered)
-        return rendered
+        return SVG(markup)
 
     try:
-        from IPython.display import IFrame, display as ipython_display
+        from IPython.display import IFrame
     except ImportError:  # pragma: no cover - IPython is an optional notebook dependency
         return graph_to_d3_html(value, **kwargs)
 
@@ -552,6 +644,7 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         node_label_attr=kwargs.get("node_label_attr", "label"),
         edge_label_attr=kwargs.get("edge_label_attr", "label"),
         show_source=kwargs.get("show_source", True),
+        max_width=kwargs.get("max_width", 80),
         d3_url=kwargs.get("d3_url", D3_CDN_URL),
     )
     data_url = "data:text/html;charset=utf-8," + quote(document, safe="")
@@ -564,7 +657,6 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
             'sandbox="allow-scripts allow-same-origin"',
         ],
     )
-    ipython_display(rendered)
     return rendered
 
 
