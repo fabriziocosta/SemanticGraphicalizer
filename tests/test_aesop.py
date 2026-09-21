@@ -63,6 +63,7 @@ def test_loader_returns_first_two_stories_and_caches_source(tmp_path, monkeypatc
     assert stories[1].splitlines()[0] == "THE SECOND FABLE"
     assert len(calls) == 1
     assert (tmp_path / "pg53103.txt").exists()
+    assert (tmp_path / "aesop_fables.json").exists()
 
     def unexpected_download(*args, **kwargs):
         raise AssertionError("cache should be used")
@@ -70,6 +71,10 @@ def test_loader_returns_first_two_stories_and_caches_source(tmp_path, monkeypatc
     monkeypatch.setattr("semantic_graphicalizer.aesop.urlopen", unexpected_download)
     cached_stories = load_aesop_fables(cache_dir=tmp_path)
     assert cached_stories == stories
+
+    (tmp_path / "pg53103.txt").unlink()
+    cached_without_raw_text = load_aesop_fables(cache_dir=tmp_path)
+    assert cached_without_raw_text == stories
 
 
 def test_loader_refreshes_cache(tmp_path, monkeypatch) -> None:

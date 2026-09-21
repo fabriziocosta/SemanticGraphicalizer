@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import json
 from pathlib import Path
 import re
 from urllib.request import Request, urlopen
@@ -11,6 +12,7 @@ from urllib.request import Request, urlopen
 AESOP_GUTENBERG_URL = "https://www.gutenberg.org/cache/epub/53103/pg53103.txt"
 DEFAULT_AESOP_CACHE_DIR = Path("data") / "raw"
 DEFAULT_AESOP_CACHE_FILE = "pg53103.txt"
+DEFAULT_AESOP_STORIES_CACHE_FILE = "aesop_fables.json"
 _TITLE_PATTERN = re.compile(r"(?m)^\s{5,}([A-ZÆŒ][A-ZÆŒ'’& ,.-]{2,80})\s*$")
 
 
@@ -29,7 +31,7 @@ def _download_text(
     return text
 
 
-def _extract_stories(book_text: str, limit: int) -> list[str]:
+def _extract_stories(book_text: str, limit: int | None = None) -> list[str]:
     body = book_text.split("*** START OF THE PROJECT GUTENBERG EBOOK", 1)[-1]
     body = body.split("*** END OF THE PROJECT GUTENBERG EBOOK", 1)[0]
     headings = list(_TITLE_PATTERN.finditer(body))
@@ -44,9 +46,19 @@ def _extract_stories(book_text: str, limit: int) -> list[str]:
         if len(story) < 250:
             continue
         stories.append(story)
-        if len(stories) == limit:
+        if limit is not None and len(stories) == limit:
             break
     return stories
+
+
+def _read_story_cache(path: Path) -> list[str] | None:
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(cached, list) or not all(isinstance(story, str) for story in cached):
+        return None
+    return cached
 
 
 def load_aesop_fables(
@@ -58,8 +70,9 @@ def load_aesop_fables(
 ) -> list[str]:
     """Return the first ``limit`` Aesop stories as complete document strings.
 
-    The Gutenberg source is downloaded once to ``cache_dir/pg53103.txt`` and
-    reused on later calls. Set ``refresh=True`` to download it again.
+    The parsed stories are cached in ``cache_dir/aesop_fables.json``. The raw
+    Gutenberg source is cached in ``cache_dir/pg53103.txt`` and is downloaded
+    only when neither cache is available. Set ``refresh=True`` to rebuild both.
     """
 
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -68,16 +81,29 @@ def load_aesop_fables(
         raise ValueError("url must be a non-empty string")
 
     cache_path = Path(cache_dir) / DEFAULT_AESOP_CACHE_FILE
+    stories_cache_path = Path(cache_dir) / DEFAULT_AESOP_STORIES_CACHE_FILE
     cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not refresh:
+        cached_stories = _read_story_cache(stories_cache_path)
+        if cached_stories is not None:
+            return cached_stories[:limit]
+
     if refresh or not cache_path.exists():
         book_text = _download_text(url, cache_path)
     else:
         book_text = cache_path.read_text(encoding="utf-8")
-    return _extract_stories(book_text, limit)
+    stories = _extract_stories(book_text)
+    stories_cache_path.write_text(
+        json.dumps(stories, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return stories[:limit]
 
 
 __all__ = [
     "AESOP_GUTENBERG_URL",
     "DEFAULT_AESOP_CACHE_DIR",
+    "DEFAULT_AESOP_STORIES_CACHE_FILE",
     "load_aesop_fables",
 ]

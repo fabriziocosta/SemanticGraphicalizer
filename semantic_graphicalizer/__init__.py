@@ -12,6 +12,7 @@ from .config import (
 from .aesop import (
     AESOP_GUTENBERG_URL,
     DEFAULT_AESOP_CACHE_DIR,
+    DEFAULT_AESOP_STORIES_CACHE_FILE,
     load_aesop_fables,
 )
 from .model import (
@@ -50,6 +51,7 @@ __all__ = [
     "ConservativeEntityResolver",
     "DEFAULT_OPENAI_MODEL",
     "DEFAULT_AESOP_CACHE_DIR",
+    "DEFAULT_AESOP_STORIES_CACHE_FILE",
     "DocumentTrace",
     "D3_CDN_URL",
     "EntityMention",
