@@ -71,6 +71,12 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "nodeRadius" in html
     assert "setMultilineText" in html
     assert ".append(\"tspan\")" in html
+    assert "d3.zoom()" in html
+    assert "scaleExtent([0.25, 4])" in html
+    assert 'event => viewport.attr("transform", event.transform)' in html
+    assert "d.pinned = true" in html
+    assert '.on("dblclick"' in html
+    assert "drag the background to pan" in html
     assert "<circle" not in html
 
 

@@ -175,7 +175,12 @@ def graph_to_d3_html(
     .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph with ontology terms and surface mentions as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.");
+  svg.append("desc").text("A force-directed graph. Scroll to zoom, drag the background to pan, drag nodes to move and pin them, and double-click a node to unpin it.");
+
+  const viewport = svg.append("g").attr("class", "viewport");
+  svg.call(d3.zoom()
+    .scaleExtent([0.25, 4])
+    .on("zoom", event => viewport.attr("transform", event.transform)));
 
   const setMultilineText = selection => {{
     selection.each(function(d) {{
@@ -193,7 +198,7 @@ def graph_to_d3_html(
     }});
   }};
 
-  const link = svg.append("g")
+  const link = viewport.append("g")
     .attr("aria-hidden", "true")
     .selectAll("line")
     .data(data.links)
@@ -202,7 +207,7 @@ def graph_to_d3_html(
     .attr("stroke-width", 1)
     .attr("stroke-opacity", 0.85);
 
-  const edgeLabel = svg.append("g")
+  const edgeLabel = viewport.append("g")
     .selectAll("text")
     .data(data.links)
     .join("text")
@@ -227,7 +232,24 @@ def graph_to_d3_html(
     return center + local;
   }};
 
-  const node = svg.append("g")
+  const drag = d3.drag()
+    .on("start", (event, d) => {{
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }})
+    .on("drag", (event, d) => {{
+      d.fx = event.x;
+      d.fy = event.y;
+    }})
+    .on("end", (event, d) => {{
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = d.x;
+      d.fy = d.y;
+      d.pinned = true;
+    }});
+
+  const node = viewport.append("g")
     .selectAll("text")
     .data(data.nodes)
     .join("text")
@@ -237,21 +259,14 @@ def graph_to_d3_html(
     .attr("text-anchor", "middle")
     .attr("dominant-baseline", "central")
     .call(setMultilineText)
-    .call(d3.drag()
-      .on("start", (event, d) => {{
-        if (!event.active) simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      }})
-      .on("drag", (event, d) => {{
-        d.fx = event.x;
-        d.fy = event.y;
-      }})
-      .on("end", (event, d) => {{
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      }}));
+    .call(drag)
+    .on("dblclick", (event, d) => {{
+      event.stopPropagation();
+      d.fx = null;
+      d.fy = null;
+      d.pinned = false;
+      simulation.alpha(0.3).restart();
+    }});
 
   const simulation = d3.forceSimulation(data.nodes)
     .force("link", d3.forceLink(data.links).id(d => d.id).distance(150).strength(0.65))
@@ -323,7 +338,12 @@ def graph_to_d3_javascript(
     .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph with ontology terms and surface mentions as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.");
+  svg.append("desc").text("A force-directed graph. Scroll to zoom, drag the background to pan, drag nodes to move and pin them, and double-click a node to unpin it.");
+
+  const viewport = svg.append("g").attr("class", "viewport");
+  svg.call(d3.zoom()
+    .scaleExtent([0.25, 4])
+    .on("zoom", event => viewport.attr("transform", event.transform)));
 
   const setMultilineText = selection => {{
     selection.each(function(d) {{
@@ -341,7 +361,7 @@ def graph_to_d3_javascript(
     }});
   }};
 
-  const link = svg.append("g")
+  const link = viewport.append("g")
     .attr("aria-hidden", "true")
     .selectAll("line")
     .data(data.links)
@@ -350,7 +370,7 @@ def graph_to_d3_javascript(
     .attr("stroke-width", 1)
     .attr("stroke-opacity", 0.85);
 
-  const edgeLabel = svg.append("g")
+  const edgeLabel = viewport.append("g")
     .selectAll("text")
     .data(data.links)
     .join("text")
@@ -376,7 +396,24 @@ def graph_to_d3_javascript(
   }};
 
   let simulation;
-  const node = svg.append("g")
+  const drag = d3.drag()
+    .on("start", (event, d) => {{
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }})
+    .on("drag", (event, d) => {{
+      d.fx = event.x;
+      d.fy = event.y;
+    }})
+    .on("end", (event, d) => {{
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = d.x;
+      d.fy = d.y;
+      d.pinned = true;
+    }});
+
+  const node = viewport.append("g")
     .selectAll("text")
     .data(data.nodes)
     .join("text")
@@ -386,21 +423,14 @@ def graph_to_d3_javascript(
     .attr("text-anchor", "middle")
     .attr("dominant-baseline", "central")
     .call(setMultilineText)
-    .call(d3.drag()
-      .on("start", (event, d) => {{
-        if (!event.active) simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      }})
-      .on("drag", (event, d) => {{
-        d.fx = event.x;
-        d.fy = event.y;
-      }})
-      .on("end", (event, d) => {{
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      }}));
+    .call(drag)
+    .on("dblclick", (event, d) => {{
+      event.stopPropagation();
+      d.fx = null;
+      d.fy = null;
+      d.pinned = false;
+      simulation.alpha(0.3).restart();
+    }});
 
   simulation = d3.forceSimulation(data.nodes)
     .force("link", d3.forceLink(data.links).id(d => d.id).distance(150).strength(0.65))
