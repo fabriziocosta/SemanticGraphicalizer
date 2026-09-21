@@ -11,7 +11,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
-from .model import ModelClient
+from .model import ModelClient, OpenAIModelClient
 from .pipeline import (
     ConservativeEntityResolver,
     EntityResolver,
@@ -29,7 +29,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         self,
         ontology: str | Path | Mapping[str, Any] | OntologyConfig,
         prompts: str | Path | Mapping[str, Any] | PromptConfig,
-        model: ModelClient,
+        model: ModelClient | None = None,
         *,
         max_chunk_chars: int = 4000,
         chunk_overlap: int = 0,
@@ -50,7 +50,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         self.prompts_ = load_prompts(self.prompts)
         segmenter = self.segmenter or ParagraphWindowSegmenter(self.max_chunk_chars, self.chunk_overlap)
         resolver = self.entity_resolver or ConservativeEntityResolver()
-        self.pipeline_ = SemanticPipeline(self.model, self.ontology_, self.prompts_, segmenter, resolver)
+        model = self.model if self.model is not None else OpenAIModelClient()
+        self.pipeline_ = SemanticPipeline(model, self.ontology_, self.prompts_, segmenter, resolver)
         self._validate_input(X)
         return self
 

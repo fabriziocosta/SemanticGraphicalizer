@@ -9,7 +9,12 @@ from .config import (
     load_ontology,
     load_prompts,
 )
-from .model import CallableModelClient, ModelClient
+from .model import (
+    DEFAULT_OPENAI_MODEL,
+    CallableModelClient,
+    ModelClient,
+    OpenAIModelClient,
+)
 from .pipeline import (
     ConservativeEntityResolver,
     ParagraphWindowSegmenter,
@@ -30,10 +35,12 @@ __all__ = [
     "CallableModelClient",
     "Chunk",
     "ConservativeEntityResolver",
+    "DEFAULT_OPENAI_MODEL",
     "DocumentTrace",
     "EntityMention",
     "ModelClient",
     "NormalizedText",
+    "OpenAIModelClient",
     "OntologyConfig",
     "OntologyRelation",
     "OntologyTerm",
