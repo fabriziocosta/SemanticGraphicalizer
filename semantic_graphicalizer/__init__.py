@@ -9,6 +9,11 @@ from .config import (
     load_ontology,
     load_prompts,
 )
+from .aesop import (
+    AESOP_GUTENBERG_URL,
+    DEFAULT_AESOP_CACHE_DIR,
+    load_aesop_fables,
+)
 from .model import (
     DEFAULT_OPENAI_MODEL,
     CallableModelClient,
@@ -36,8 +41,10 @@ __all__ = [
     "Chunk",
     "ConservativeEntityResolver",
     "DEFAULT_OPENAI_MODEL",
+    "DEFAULT_AESOP_CACHE_DIR",
     "DocumentTrace",
     "EntityMention",
+    "AESOP_GUTENBERG_URL",
     "ModelClient",
     "NormalizedText",
     "OpenAIModelClient",
@@ -53,5 +60,6 @@ __all__ = [
     "Summary",
     "Triple",
     "load_ontology",
+    "load_aesop_fables",
     "load_prompts",
 ]

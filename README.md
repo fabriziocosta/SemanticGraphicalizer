@@ -10,10 +10,18 @@ from semantic_graphicalizer import SemanticGraphicalizer
 graphicalizer = SemanticGraphicalizer(
     ontology="configs/ontologies/aesop.yaml",
     prompts="configs/prompts/aesop.yaml",
-    model=model_client,
 )
 graphs = graphicalizer.fit_transform(["The fox met the crow."])
 ```
+
+When `model` is omitted, the package uses OpenAI `gpt-4.1-mini` through the
+Responses API. Set `OPENAI_API_KEY` in the environment before running it:
+
+```bash
+export OPENAI_API_KEY="your_api_key_here"
+```
+
+Pass `model=...` to inject a fake client for tests or another provider.
 
 Nodes store the ontology term in `node["label"]`. Edges store the complete proposition in `edge["label"]`; `edge["predicate"]` contains the ontology relation ID. `transform_with_trace` exposes all intermediate stages and provenance.
 
@@ -25,3 +33,14 @@ Install the package and development tools with Python 3.12:
 ```
 
 See `notebooks/aesop_tales.ipynb` for the Gutenberg download, fable parsing, graph construction, and visualization workflow.
+
+The download and cache logic is reusable outside the notebook:
+
+```python
+from semantic_graphicalizer import load_aesop_fables
+
+stories = load_aesop_fables(limit=2)
+```
+
+This returns a `list[str]`, one complete story per item, and caches the source
+under `data/raw/pg53103.txt`.

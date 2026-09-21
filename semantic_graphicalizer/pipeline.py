@@ -112,11 +112,92 @@ class ConservativeEntityResolver:
         return f"{label}::{normalized}"
 
 
+_QUALIFICATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "modality": {"type": ["string", "null"]},
+        "negated": {"type": "boolean"},
+        "attribution": {"type": ["string", "null"]},
+        "temporal": {"type": ["string", "null"]},
+    },
+    "required": ["modality", "negated", "attribution", "temporal"],
+    "additionalProperties": False,
+}
+
+_ENTITY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "mention": {"type": "string"},
+        "label": {"type": "string"},
+        "key": {"type": ["string", "null"]},
+    },
+    "required": ["mention", "label", "key"],
+    "additionalProperties": False,
+}
+
 _SCHEMAS: dict[str, dict[str, Any]] = {
-    "summarize": {"type": "object", "required": ["summary"]},
-    "normalize": {"type": "object", "required": ["normalized"]},
-    "decompose": {"type": "object", "required": ["propositions"]},
-    "triple": {"type": "object", "required": ["triples"]},
+    "summarize": {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+        "additionalProperties": False,
+    },
+    "normalize": {
+        "type": "object",
+        "properties": {"normalized": {"type": "string"}},
+        "required": ["normalized"],
+        "additionalProperties": False,
+    },
+    "decompose": {
+        "type": "object",
+        "properties": {
+            "propositions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "text": {"type": "string"},
+                        "source_text": {"type": "string"},
+                        "confidence": {"type": ["number", "null"]},
+                        "qualification": _QUALIFICATION_SCHEMA,
+                    },
+                    "required": ["id", "text", "source_text", "confidence", "qualification"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["propositions"],
+        "additionalProperties": False,
+    },
+    "triple": {
+        "type": "object",
+        "properties": {
+            "triples": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "proposition_id": {"type": "string"},
+                        "subject": _ENTITY_SCHEMA,
+                        "predicate": {"type": "string"},
+                        "object": _ENTITY_SCHEMA,
+                        "proposition": {"type": "string"},
+                        "confidence": {"type": ["number", "null"]},
+                        "qualification": _QUALIFICATION_SCHEMA,
+                    },
+                    "required": [
+                        "id", "proposition_id", "subject", "predicate", "object",
+                        "proposition", "confidence", "qualification",
+                    ],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["triples"],
+        "additionalProperties": False,
+    },
 }
 
 

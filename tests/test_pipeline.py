@@ -99,3 +99,23 @@ def test_malformed_stage_output_is_explicit() -> None:
 
     with pytest.raises(StageOutputError, match="summarize"):
         make_transformer(BadModel()).fit_transform(["A tale."])
+
+
+def test_default_model_factory_is_used_when_model_is_omitted(monkeypatch) -> None:
+    import semantic_graphicalizer.transformer as transformer_module
+
+    created = []
+
+    class DefaultModel:
+        def __init__(self):
+            created.append(self)
+
+        def generate(self, **kwargs):
+            return FakeModel().generate(**kwargs)
+
+    monkeypatch.setattr(transformer_module, "OpenAIModelClient", DefaultModel)
+    transformer = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+    ).fit(["A tale."])
+    assert transformer.pipeline_.model is created[0]
