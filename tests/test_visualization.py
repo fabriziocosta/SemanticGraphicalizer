@@ -45,3 +45,5 @@ def test_display_graph_returns_ipython_html() -> None:
     html = display_graph(graph)
 
     assert "semantic-graphicalizer-" in html.data
+    assert "d3.forceSimulation" in html.data
+    assert html.lib == ["https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"]

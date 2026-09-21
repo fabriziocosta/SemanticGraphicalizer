@@ -80,6 +80,11 @@ def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
     assert trace.normalized[0].text
     assert trace.propositions[0].text
     assert trace.triples[0].predicate == "interacts_with"
+    assert [stat.stage for stat in trace.stats] == [
+        "segment", "summarize", "normalize", "decompose", "triple", "integrate", "total",
+    ]
+    assert all(stat.elapsed_seconds >= 0 for stat in trace.stats)
+    assert trace.stats[-1].details["edges"] == trace.graph.number_of_edges()
     edge = next(iter(trace.graph.edges(data=True)))[2]
     assert edge["provenance"]["chunk_id"].endswith("chunk-0")
 
@@ -89,6 +94,26 @@ def test_transformer_display_accepts_trace_graph() -> None:
     trace = transformer.transform_with_trace(["A tale."])[0]
     rendered = transformer.display(trace)
     assert "Ontology graph" in rendered.data
+
+
+def test_verbose_reports_pipeline_stages_and_runtimes(capsys) -> None:
+    make_transformer().fit_transform(["A tale."])
+    output = capsys.readouterr().out
+    for stage in ("segment", "summarize", "normalize", "decompose", "triple", "integrate", "total"):
+        assert f"] {stage}:" in output
+    assert "ms" in output
+
+
+def test_verbose_false_suppresses_progress_output(capsys) -> None:
+    transformer = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+        FakeModel(),
+        verbose=False,
+    )
+    trace = transformer.fit(["A tale."]).transform_with_trace(["A tale."])[0]
+    assert capsys.readouterr().out == ""
+    assert trace.stats[-1].stage == "total"
 
 
 def test_input_must_be_an_iterable_of_documents() -> None:

@@ -174,15 +174,133 @@ def graph_to_d3_html(
 </script>'''
 
 
+def graph_to_d3_javascript(
+    value: nx.Graph | Any,
+    *,
+    width: int = 900,
+    height: int = 600,
+    node_label_attr: str = "label",
+    edge_label_attr: str = "label",
+) -> str:
+    """Return JavaScript that renders the graph into an IPython output area."""
+
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    root_id = f"semantic-graphicalizer-{uuid4().hex}"
+    payload = json.dumps(
+        graph_to_d3_data(
+            value,
+            node_label_attr=node_label_attr,
+            edge_label_attr=edge_label_attr,
+        ),
+        ensure_ascii=False,
+    ).replace("<", "\\u003c")
+    width_json = json.dumps(int(width))
+    height_json = json.dumps(int(height))
+
+    return f'''(() => {{
+  const root = document.createElement("div");
+  root.id = {json.dumps(root_id)};
+  root.setAttribute("role", "img");
+  root.setAttribute("aria-label", "Ontology graph");
+  element.appendChild(root);
+
+  const data = {payload};
+  const width = {width_json};
+  const height = {height_json};
+  const svg = d3.select(root)
+    .append("svg")
+    .attr("viewBox", `0 0 ${{width}} ${{height}}`)
+    .attr("width", "100%")
+    .attr("height", height)
+    .attr("role", "img")
+    .attr("aria-label", "Ontology graph with proposition-labelled edges");
+
+  svg.append("title").text("Ontology graph");
+  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and propositions as edge labels.");
+
+  const link = svg.append("g")
+    .attr("aria-hidden", "true")
+    .selectAll("line")
+    .data(data.links)
+    .join("line")
+    .attr("stroke", "#9aa0a6")
+    .attr("stroke-width", 1)
+    .attr("stroke-opacity", 0.85);
+
+  const edgeLabel = svg.append("g")
+    .selectAll("text")
+    .data(data.links)
+    .join("text")
+    .attr("fill", "#6b7280")
+    .attr("font-size", 11)
+    .attr("text-anchor", "middle")
+    .attr("dy", -4)
+    .text(d => d.label);
+
+  let simulation;
+  const node = svg.append("g")
+    .selectAll("text")
+    .data(data.nodes)
+    .join("text")
+    .attr("fill", "currentColor")
+    .attr("font-size", 13)
+    .attr("font-weight", 500)
+    .attr("text-anchor", "middle")
+    .attr("dominant-baseline", "central")
+    .text(d => d.label)
+    .call(d3.drag()
+      .on("start", (event, d) => {{
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }})
+      .on("drag", (event, d) => {{
+        d.fx = event.x;
+        d.fy = event.y;
+      }})
+      .on("end", (event, d) => {{
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }}));
+
+  simulation = d3.forceSimulation(data.nodes)
+    .force("link", d3.forceLink(data.links).id(d => d.id).distance(150).strength(0.65))
+    .force("charge", d3.forceManyBody().strength(-280))
+    .force("center", d3.forceCenter(width / 2, height / 2))
+    .force("collision", d3.forceCollide().radius(48))
+    .on("tick", () => {{
+      link
+        .attr("x1", d => d.source.x)
+        .attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x)
+        .attr("y2", d => d.target.y);
+      edgeLabel
+        .attr("x", d => (d.source.x + d.target.x) / 2)
+        .attr("y", d => (d.source.y + d.target.y) / 2);
+      node
+        .attr("x", d => d.x)
+        .attr("y", d => d.y);
+    }});
+}})();'''
+
+
 def display_graph(value: nx.Graph | Any, **kwargs: Any) -> Any:
-    """Return an IPython HTML object for inline notebook display."""
+    """Return an IPython JavaScript object for inline notebook display."""
 
-    html = graph_to_d3_html(value, **kwargs)
     try:
-        from IPython.display import HTML
+        from IPython.display import Javascript
     except ImportError:  # pragma: no cover - IPython is an optional notebook dependency
-        return html
-    return HTML(html)
+        return graph_to_d3_html(value, **kwargs)
+    d3_url = kwargs.pop("d3_url", D3_CDN_URL)
+    return Javascript(graph_to_d3_javascript(value, **kwargs), lib=[d3_url])
 
 
-__all__ = ["D3_CDN_URL", "display_graph", "graph_to_d3_data", "graph_to_d3_html"]
+__all__ = [
+    "D3_CDN_URL",
+    "display_graph",
+    "graph_to_d3_data",
+    "graph_to_d3_html",
+    "graph_to_d3_javascript",
+]

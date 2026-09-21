@@ -33,9 +33,16 @@ from .types import (
     NormalizedText,
     Proposition,
     Summary,
+    StageStat,
     Triple,
 )
-from .visualization import D3_CDN_URL, display_graph, graph_to_d3_data, graph_to_d3_html
+from .visualization import (
+    D3_CDN_URL,
+    display_graph,
+    graph_to_d3_data,
+    graph_to_d3_html,
+    graph_to_d3_javascript,
+)
 
 __all__ = [
     "CallableModelClient",
@@ -60,10 +67,12 @@ __all__ = [
     "SemanticGraphicalizer",
     "SemanticPipeline",
     "Summary",
+    "StageStat",
     "Triple",
     "display_graph",
     "graph_to_d3_data",
     "graph_to_d3_html",
+    "graph_to_d3_javascript",
     "load_ontology",
     "load_aesop_fables",
     "load_prompts",

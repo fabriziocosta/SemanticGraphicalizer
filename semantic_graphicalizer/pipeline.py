@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ from .types import (
     NormalizedText,
     Proposition,
     Summary,
+    StageStat,
     Triple,
 )
 
@@ -238,9 +240,44 @@ class SemanticPipeline:
     prompts: PromptConfig
     segmenter: Segmenter
     resolver: EntityResolver
+    verbose: bool = True
 
     def __post_init__(self) -> None:
         self.model = as_model_client(self.model)
+
+    def _record_stat(
+        self,
+        stats: list[StageStat],
+        *,
+        document_id: str,
+        stage: str,
+        started: float,
+        input_count: int,
+        output_count: int,
+        chunk_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        elapsed_seconds = time.perf_counter() - started
+        stat = StageStat(
+            document_id=document_id,
+            stage=stage,
+            elapsed_seconds=elapsed_seconds,
+            input_count=input_count,
+            output_count=output_count,
+            chunk_id=chunk_id,
+            details=details or {},
+        )
+        stats.append(stat)
+        if not self.verbose:
+            return
+        scope = f" {chunk_id.rsplit(':', 1)[-1]}" if chunk_id else ""
+        detail_text = ", ".join(f"{key}={value}" for key, value in stat.details.items())
+        suffix = f" | {detail_text}" if detail_text else ""
+        print(
+            f"[{document_id}{scope}] {stage}: "
+            f"{input_count} -> {output_count} | "
+            f"{elapsed_seconds * 1000:.1f} ms{suffix}"
+        )
 
     def _generate(self, stage: str, prompt_values: dict[str, str], *, chunk: Chunk) -> Mapping[str, Any]:
         prompt = self.prompts.render(stage, **prompt_values)
@@ -411,19 +448,112 @@ class SemanticPipeline:
         return graph
 
     def process(self, document_id: str, text: str) -> DocumentTrace:
+        total_started = time.perf_counter()
+        stats: list[StageStat] = []
+        if self.verbose:
+            print(f"[{document_id}] processing document: chars={len(text)}")
+
+        started = time.perf_counter()
         chunks = self.segmenter.segment(document_id, text)
+        self._record_stat(
+            stats,
+            document_id=document_id,
+            stage="segment",
+            started=started,
+            input_count=1,
+            output_count=len(chunks),
+            details={
+                "input_chars": len(text),
+                "chunk_chars": sum(len(chunk.text) for chunk in chunks),
+            },
+        )
         summaries: list[Summary] = []
         normalized: list[NormalizedText] = []
         propositions: list[Proposition] = []
         triples: list[Triple] = []
         for chunk in chunks:
+            if self.verbose:
+                chunk_scope = chunk.chunk_id.rsplit(":", 1)[-1]
+                print(f"[{document_id} {chunk_scope}] compiling semantic stages")
+
+            started = time.perf_counter()
             summary = self._summarize(chunk)
+            self._record_stat(
+                stats,
+                document_id=document_id,
+                stage="summarize",
+                started=started,
+                input_count=1,
+                output_count=1,
+                chunk_id=chunk.chunk_id,
+                details={"input_chars": len(chunk.text), "output_chars": len(summary.text)},
+            )
+
+            started = time.perf_counter()
             normalized_text = self._normalize(summary)
+            self._record_stat(
+                stats,
+                document_id=document_id,
+                stage="normalize",
+                started=started,
+                input_count=1,
+                output_count=1,
+                chunk_id=chunk.chunk_id,
+                details={"input_chars": len(summary.text), "output_chars": len(normalized_text.text)},
+            )
+
+            started = time.perf_counter()
             chunk_propositions = self._decompose(normalized_text)
+            self._record_stat(
+                stats,
+                document_id=document_id,
+                stage="decompose",
+                started=started,
+                input_count=1,
+                output_count=len(chunk_propositions),
+                chunk_id=chunk.chunk_id,
+            )
+
+            started = time.perf_counter()
             chunk_triples = self._triples(normalized_text, chunk_propositions)
+            self._record_stat(
+                stats,
+                document_id=document_id,
+                stage="triple",
+                started=started,
+                input_count=len(chunk_propositions),
+                output_count=len(chunk_triples),
+                chunk_id=chunk.chunk_id,
+            )
             summaries.append(summary)
             normalized.append(normalized_text)
             propositions.extend(chunk_propositions)
             triples.extend(chunk_triples)
+
+        started = time.perf_counter()
         graph = self._integrate(document_id, triples)
-        return DocumentTrace(document_id, text, chunks, summaries, normalized, propositions, triples, graph)
+        self._record_stat(
+            stats,
+            document_id=document_id,
+            stage="integrate",
+            started=started,
+            input_count=len(triples),
+            output_count=graph.number_of_edges(),
+            details={"nodes": graph.number_of_nodes(), "edges": graph.number_of_edges()},
+        )
+        self._record_stat(
+            stats,
+            document_id=document_id,
+            stage="total",
+            started=total_started,
+            input_count=1,
+            output_count=1,
+            details={
+                "chunks": len(chunks),
+                "propositions": len(propositions),
+                "triples": len(triples),
+                "nodes": graph.number_of_nodes(),
+                "edges": graph.number_of_edges(),
+            },
+        )
+        return DocumentTrace(document_id, text, chunks, summaries, normalized, propositions, triples, graph, stats)

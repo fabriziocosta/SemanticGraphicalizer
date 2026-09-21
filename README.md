@@ -53,3 +53,7 @@ graphicalizer.display(graphs[0])
 
 The default view uses ontology IDs as text-only nodes, proposition labels on
 thin gray edges, and no filled node circles.
+
+Progress reporting is enabled by default. Set `verbose=False` to suppress it;
+stage timings and counts remain available on each `DocumentTrace.stats` item
+when using `transform_with_trace`.

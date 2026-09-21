@@ -36,6 +36,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         chunk_overlap: int = 0,
         segmenter: Segmenter | None = None,
         entity_resolver: EntityResolver | None = None,
+        verbose: bool = True,
     ) -> None:
         self.ontology = ontology
         self.prompts = prompts
@@ -44,6 +45,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         self.chunk_overlap = chunk_overlap
         self.segmenter = segmenter
         self.entity_resolver = entity_resolver
+        self.verbose = verbose
 
     def fit(self, X: Iterable[str], y: Any = None) -> "SemanticGraphicalizer":
         del y
@@ -52,7 +54,19 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         segmenter = self.segmenter or ParagraphWindowSegmenter(self.max_chunk_chars, self.chunk_overlap)
         resolver = self.entity_resolver or ConservativeEntityResolver()
         model = self.model if self.model is not None else OpenAIModelClient()
-        self.pipeline_ = SemanticPipeline(model, self.ontology_, self.prompts_, segmenter, resolver)
+        self.pipeline_ = SemanticPipeline(
+            model,
+            self.ontology_,
+            self.prompts_,
+            segmenter,
+            resolver,
+            self.verbose,
+        )
+        if self.verbose:
+            print(
+                f"[SemanticGraphicalizer] ready: model={type(model).__name__}, "
+                f"ontology={self.ontology_.name}, domain={self.prompts_.domain}"
+            )
         self._validate_input(X)
         return self
 

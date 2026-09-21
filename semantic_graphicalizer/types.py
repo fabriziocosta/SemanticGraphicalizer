@@ -59,6 +59,19 @@ class Triple:
     qualification: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class StageStat:
+    """Runtime and cardinality information for one pipeline stage."""
+
+    document_id: str
+    stage: str
+    elapsed_seconds: float
+    input_count: int
+    output_count: int
+    chunk_id: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class DocumentTrace:
     document_id: str
@@ -69,3 +82,4 @@ class DocumentTrace:
     propositions: list[Proposition]
     triples: list[Triple]
     graph: nx.MultiDiGraph
+    stats: list[StageStat] = field(default_factory=list)
