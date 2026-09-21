@@ -47,10 +47,12 @@ results under `data/raw/aesop_fables.json`. The Gutenberg source is also kept
 under `data/raw/pg53103.txt`; after the first call, subsequent calls do not
 download anything.
 
-Graphs can be rendered inline in a notebook with a D3 force layout:
+Graphs can be rendered inline in a notebook with either the interactive D3 force
+layout or a deterministic static NetworkX Kamada-Kawai layout:
 
 ```python
-graphicalizer.display(graphs[0])
+graphicalizer.display(graphs[0], mode="dynamic")
+graphicalizer.display(graphs[0], mode="static")
 ```
 
 The default view uses ontology IDs as text-only nodes, proposition labels on

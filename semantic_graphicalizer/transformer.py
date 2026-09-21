@@ -94,7 +94,13 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             for index, document in enumerate(documents)
         ]
 
-    def display(self, graph_or_trace: nx.Graph | DocumentTrace, **kwargs: Any) -> Any:
-        """Return an inline D3 force-directed visualization of a graph."""
+    def display(
+        self,
+        graph_or_trace: nx.Graph | DocumentTrace,
+        *,
+        mode: str = "dynamic",
+        **kwargs: Any,
+    ) -> Any:
+        """Return a dynamic D3 or static Kamada-Kawai visualization."""
 
-        return display_graph(graph_or_trace, **kwargs)
+        return display_graph(graph_or_trace, mode=mode, **kwargs)

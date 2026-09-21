@@ -1,8 +1,9 @@
-"""Inline D3 force-directed rendering for NetworkX graphs."""
+"""Inline dynamic and static rendering for NetworkX graphs."""
 
 from __future__ import annotations
 
 import json
+from html import escape
 from typing import Any
 from uuid import uuid4
 
@@ -286,8 +287,100 @@ def graph_to_d3_javascript(
 }})();'''
 
 
-def display_graph(value: nx.Graph | Any, **kwargs: Any) -> Any:
-    """Return an IPython JavaScript object for inline notebook display."""
+def graph_to_static_svg(
+    value: nx.Graph | Any,
+    *,
+    width: int = 900,
+    height: int = 600,
+    node_label_attr: str = "label",
+    edge_label_attr: str = "label",
+) -> str:
+    """Return an SVG using NetworkX's deterministic Kamada-Kawai layout."""
+
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+
+    graph = _graph_from_value(value)
+    node_items = list(graph.nodes(data=True))
+    positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
+    margin = 48
+    usable_width = max(width - 2 * margin, 1)
+    usable_height = max(height - 2 * margin, 1)
+
+    def point(node_id: Any) -> tuple[float, float]:
+        x, y = positions[node_id]
+        return (
+            margin + (float(x) + 1.0) * usable_width / 2.0,
+            margin + (1.0 - (float(y) + 1.0) / 2.0) * usable_height,
+        )
+
+    if graph.is_multigraph():
+        edge_items = [(source, target, data) for source, target, _key, data in graph.edges(data=True, keys=True)]
+    else:
+        edge_items = list(graph.edges(data=True))
+
+    def xml_text(value: Any) -> str:
+        return escape(str(value), quote=True)
+
+    elements: list[str] = []
+    if graph.is_directed():
+        elements.append(
+            '<defs><marker id="semantic-graphicalizer-arrow" markerWidth="8" '
+            'markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">'
+            '<path d="M0,0 L8,4 L0,8 z" fill="#9aa0a6" /></marker></defs>'
+        )
+
+    for source, target, data in edge_items:
+        x1, y1 = point(source)
+        x2, y2 = point(target)
+        marker = ' marker-end="url(#semantic-graphicalizer-arrow)"' if graph.is_directed() else ""
+        elements.append(
+            f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
+            f'stroke="#9aa0a6" stroke-width="1" stroke-opacity="0.85"{marker} />'
+        )
+        label = data.get(edge_label_attr, "")
+        if label:
+            elements.append(
+                f'<text x="{(x1 + x2) / 2:.2f}" y="{(y1 + y2) / 2 - 4:.2f}" '
+                'fill="#6b7280" font-size="11" text-anchor="middle" '
+                'font-family="sans-serif">'
+                f"{xml_text(label)}</text>"
+            )
+
+    for node_id, data in node_items:
+        x, y = point(node_id)
+        label = data.get(node_label_attr, node_id)
+        elements.append(
+            f'<text x="{x:.2f}" y="{y:.2f}" fill="currentColor" font-size="13" '
+            'font-weight="500" text-anchor="middle" dominant-baseline="central" '
+            'font-family="sans-serif">'
+            f"{xml_text(label)}</text>"
+        )
+
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{int(height)}" '
+        f'viewBox="0 0 {int(width)} {int(height)}" role="img" aria-label="Ontology graph">'
+        '<title>Ontology graph</title>'
+        '<desc>A deterministic Kamada-Kawai graph with ontology terms as text-only nodes '
+        'and propositions as edge labels.</desc>'
+        + "".join(elements)
+        + "</svg>"
+    )
+
+
+def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any) -> Any:
+    """Return a dynamic D3 or static Kamada-Kawai notebook visualization."""
+
+    if mode not in {"dynamic", "static"}:
+        raise ValueError("mode must be either 'dynamic' or 'static'")
+
+    if mode == "static":
+        markup = graph_to_static_svg(value, **kwargs)
+        try:
+            from IPython.display import SVG
+        except ImportError:  # pragma: no cover - depends on environment
+            return markup
+        return SVG(markup)
 
     try:
         from IPython.display import Javascript
@@ -303,4 +396,5 @@ __all__ = [
     "graph_to_d3_data",
     "graph_to_d3_html",
     "graph_to_d3_javascript",
+    "graph_to_static_svg",
 ]

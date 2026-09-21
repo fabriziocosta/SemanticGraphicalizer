@@ -43,6 +43,7 @@ from .visualization import (
     graph_to_d3_data,
     graph_to_d3_html,
     graph_to_d3_javascript,
+    graph_to_static_svg,
 )
 
 __all__ = [
@@ -75,6 +76,7 @@ __all__ = [
     "graph_to_d3_data",
     "graph_to_d3_html",
     "graph_to_d3_javascript",
+    "graph_to_static_svg",
     "load_ontology",
     "load_aesop_fables",
     "load_prompts",
