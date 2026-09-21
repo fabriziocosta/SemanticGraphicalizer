@@ -99,7 +99,8 @@ def test_transformer_display_accepts_trace_graph() -> None:
     transformer = make_transformer().fit(["A tale."])
     trace = transformer.transform_with_trace(["A tale."])[0]
     rendered = transformer.display(trace)
-    assert "Ontology graph" in rendered.data
+    assert "data:text/html;charset=utf-8," in rendered._repr_html_()
+    assert rendered.src.startswith("data:text/html;charset=utf-8,")
 
 
 def test_verbose_reports_pipeline_stages_and_runtimes(capsys) -> None:

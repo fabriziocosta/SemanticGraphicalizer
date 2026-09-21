@@ -5,6 +5,7 @@ from semantic_graphicalizer import (
     display_graph,
     graph_to_d3_data,
     graph_to_d3_html,
+    graph_to_d3_iframe,
     graph_to_static_svg,
 )
 
@@ -71,15 +72,28 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "<circle" not in html
 
 
-def test_display_graph_returns_ipython_html() -> None:
+def test_display_graph_returns_html_iframe_for_dynamic_mode() -> None:
     graph = nx.MultiDiGraph()
     graph.add_node("fox", label="Animal")
 
     html = display_graph(graph)
+    rendered_html = html._repr_html_()
 
-    assert "semantic-graphicalizer-" in html.data
-    assert "d3.forceSimulation" in html.data
-    assert html.lib == ["https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"]
+    assert "<iframe" in rendered_html
+    assert "data:text/html;charset=utf-8," in rendered_html
+    assert "sandbox=\"allow-scripts allow-same-origin\"" in rendered_html
+    assert "100%" in rendered_html
+
+
+def test_d3_iframe_contains_force_layout_document() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_edge("fox", "crow", predicate="interacts_with", label="The fox interacts with the crow.")
+
+    iframe = graph_to_d3_iframe(graph)
+
+    assert iframe.startswith('<iframe title="Ontology graph"')
+    assert "srcdoc=" in iframe
+    assert "d3.forceSimulation" in iframe
 
 
 def test_visualization_can_hide_source_fragments() -> None:

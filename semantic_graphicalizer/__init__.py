@@ -42,6 +42,7 @@ from .visualization import (
     display_graph,
     graph_to_d3_data,
     graph_to_d3_html,
+    graph_to_d3_iframe,
     graph_to_d3_javascript,
     graph_to_static_svg,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "display_graph",
     "graph_to_d3_data",
     "graph_to_d3_html",
+    "graph_to_d3_iframe",
     "graph_to_d3_javascript",
     "graph_to_static_svg",
     "load_ontology",

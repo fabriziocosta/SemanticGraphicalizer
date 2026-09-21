@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from html import escape
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import networkx as nx
@@ -361,6 +362,66 @@ def graph_to_d3_javascript(
 }})();'''
 
 
+def graph_to_d3_iframe(
+    value: nx.Graph | Any,
+    *,
+    width: int = 900,
+    height: int = 600,
+    node_label_attr: str = "label",
+    edge_label_attr: str = "label",
+    show_source: bool = True,
+    d3_url: str = D3_CDN_URL,
+) -> str:
+    """Return an HTML iframe that runs the D3 graph in notebook frontends."""
+
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    if not isinstance(d3_url, str) or not d3_url.strip():
+        raise ValueError("d3_url must be a non-empty string")
+
+    document = _graph_to_d3_document(
+        value,
+        width=width,
+        height=height,
+        node_label_attr=node_label_attr,
+        edge_label_attr=edge_label_attr,
+        show_source=show_source,
+        d3_url=d3_url,
+    )
+    return (
+        f'<iframe title="Ontology graph" width="100%" height="{int(height)}" '
+        'style="border:0; display:block;" sandbox="allow-scripts allow-same-origin" '
+        f'srcdoc="{escape(document, quote=True)}"></iframe>'
+    )
+
+
+def _graph_to_d3_document(
+    value: nx.Graph | Any,
+    *,
+    width: int,
+    height: int,
+    node_label_attr: str,
+    edge_label_attr: str,
+    show_source: bool,
+    d3_url: str,
+) -> str:
+    """Build the document used by notebook iframe renderers."""
+
+    return f'''<!doctype html>
+<html>
+<head><meta charset="utf-8"><style>html, body {{ margin: 0; padding: 0; overflow: hidden; }}</style></head>
+<body>{graph_to_d3_html(
+    value,
+    width=width,
+    height=height,
+    node_label_attr=node_label_attr,
+    edge_label_attr=edge_label_attr,
+    show_source=show_source,
+    d3_url=d3_url,
+)}</body>
+</html>'''
+
+
 def graph_to_static_svg(
     value: nx.Graph | Any,
     *,
@@ -462,7 +523,7 @@ def graph_to_static_svg(
 
 
 def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any) -> Any:
-    """Return a dynamic D3 or static Kamada-Kawai notebook visualization."""
+    """Return and emit a dynamic D3 or static Kamada-Kawai visualization."""
 
     if mode not in {"dynamic", "static"}:
         raise ValueError("mode must be either 'dynamic' or 'static'")
@@ -470,17 +531,41 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
     if mode == "static":
         markup = graph_to_static_svg(value, **kwargs)
         try:
-            from IPython.display import SVG
+            from IPython.display import SVG, display as ipython_display
         except ImportError:  # pragma: no cover - depends on environment
             return markup
-        return SVG(markup)
+        rendered = SVG(markup)
+        ipython_display(rendered)
+        return rendered
 
     try:
-        from IPython.display import Javascript
+        from IPython.display import IFrame, display as ipython_display
     except ImportError:  # pragma: no cover - IPython is an optional notebook dependency
         return graph_to_d3_html(value, **kwargs)
-    d3_url = kwargs.pop("d3_url", D3_CDN_URL)
-    return Javascript(graph_to_d3_javascript(value, **kwargs), lib=[d3_url])
+
+    width = int(kwargs.get("width", 900))
+    height = int(kwargs.get("height", 600))
+    document = _graph_to_d3_document(
+        value,
+        width=width,
+        height=height,
+        node_label_attr=kwargs.get("node_label_attr", "label"),
+        edge_label_attr=kwargs.get("edge_label_attr", "label"),
+        show_source=kwargs.get("show_source", True),
+        d3_url=kwargs.get("d3_url", D3_CDN_URL),
+    )
+    data_url = "data:text/html;charset=utf-8," + quote(document, safe="")
+    rendered = IFrame(
+        data_url,
+        width="100%",
+        height=height,
+        extras=[
+            'style="border:0; display:block;"',
+            'sandbox="allow-scripts allow-same-origin"',
+        ],
+    )
+    ipython_display(rendered)
+    return rendered
 
 
 __all__ = [
@@ -488,6 +573,7 @@ __all__ = [
     "display_graph",
     "graph_to_d3_data",
     "graph_to_d3_html",
+    "graph_to_d3_iframe",
     "graph_to_d3_javascript",
     "graph_to_static_svg",
 ]
