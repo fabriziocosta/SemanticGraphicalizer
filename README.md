@@ -23,7 +23,11 @@ export OPENAI_API_KEY="your_api_key_here"
 
 Pass `model=...` to inject a fake client for tests or another provider.
 
-Nodes store the ontology term in `node["label"]`. Edges store the complete proposition in `edge["label"]`; `edge["predicate"]` contains the ontology relation ID. `transform_with_trace` exposes all intermediate stages and provenance.
+Nodes store the ontology term in `node["label"]`. Nodes and edges also carry
+`document_id` and the original `document_text`; chunk-level excerpts remain in
+their provenance fields. Edges store the complete proposition in
+`edge["label"]`, while `edge["predicate"]` contains the ontology relation ID.
+`transform_with_trace` exposes all intermediate stages and provenance.
 
 Install the package and development tools with Python 3.12:
 
@@ -55,8 +59,9 @@ graphicalizer.display(graphs[0], mode="dynamic")
 graphicalizer.display(graphs[0], mode="static")
 ```
 
-The default view uses ontology IDs as text-only nodes, proposition labels on
-thin gray edges, and no filled node circles.
+The default view uses ontology IDs as text-only nodes, ontology relation IDs on
+thin gray edges, and no filled node circles. Pass `edge_label_attr="label"` when
+you want the full proposition text instead.
 
 Progress reporting is enabled by default. Set `verbose=False` to suppress it;
 stage timings and counts remain available on each `DocumentTrace.stats` item

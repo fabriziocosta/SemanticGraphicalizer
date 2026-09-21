@@ -53,6 +53,12 @@ def test_transformer_returns_one_multidigraph_per_document() -> None:
     assert len(edges) == 1
     assert edges[0][3]["label"] == "The fox interacts with the crow."
     assert edges[0][3]["predicate"] == "interacts_with"
+    assert graph.graph["document_id"] == "document-0"
+    assert graph.graph["document_text"] == "The fox met the crow."
+    assert graph.nodes["animal::fox"]["document_id"] == "document-0"
+    assert graph.nodes["animal::fox"]["document_text"] == "The fox met the crow."
+    assert edges[0][3]["document_id"] == "document-0"
+    assert edges[0][3]["document_text"] == "The fox met the crow."
 
 
 def test_transformer_preserves_multiple_edges() -> None:

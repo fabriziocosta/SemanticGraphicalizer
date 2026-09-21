@@ -420,8 +420,8 @@ class SemanticPipeline:
             ))
         return triples
 
-    def _integrate(self, document_id: str, triples: Sequence[Triple]) -> nx.MultiDiGraph:
-        graph = nx.MultiDiGraph(document_id=document_id)
+    def _integrate(self, document_id: str, document_text: str, triples: Sequence[Triple]) -> nx.MultiDiGraph:
+        graph = nx.MultiDiGraph(document_id=document_id, document_text=document_text)
         for index, triple in enumerate(triples):
             subject_id = self.resolver.resolve(triple.subject)
             object_id = self.resolver.resolve(triple.object)
@@ -431,6 +431,8 @@ class SemanticPipeline:
                         node_id,
                         label=entity.ontology_term,
                         canonical_id=node_id,
+                        document_id=document_id,
+                        document_text=document_text,
                         mentions=[],
                         provenance=[],
                     )
@@ -453,6 +455,8 @@ class SemanticPipeline:
                 proposition_id=triple.proposition_id,
                 confidence=triple.confidence,
                 qualification=triple.qualification,
+                document_id=document_id,
+                document_text=document_text,
                 provenance={
                     "document_id": document_id,
                     "chunk_id": triple.chunk.chunk_id,
@@ -545,7 +549,7 @@ class SemanticPipeline:
             triples.extend(chunk_triples)
 
         started = time.perf_counter()
-        graph = self._integrate(document_id, triples)
+        graph = self._integrate(document_id, text, triples)
         self._record_stat(
             stats,
             document_id=document_id,

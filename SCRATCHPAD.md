@@ -6,6 +6,7 @@
 
 ## Done
 
+- Changed visualization edge labels to default to ontology relation IDs from `edge["predicate"]`; proposition text remains available via `edge_label_attr="label"`. Added dynamic/static coverage; 23 tests pass. [2026-09-21 11:50]
 - Added `display(mode="dynamic"|"static")`; dynamic remains D3 force-directed, while static emits text-only SVG using NetworkX Kamada-Kawai layout. Added notebook examples and 22 passing tests. [2026-09-21 11:35]
 - Replaced the notebook `DemoModel` with the default OpenAI `gpt-4.1-mini` path, executed the two-story notebook successfully, and constrained live triple schemas to the configured ontology. [2026-09-21 11:20]
 - Verified the trusted notebook visually in Safari: the inline D3 graph renders with ontology-term text nodes, proposition labels, and thin gray edges; all 20 tests pass. [2026-09-21 11:05]

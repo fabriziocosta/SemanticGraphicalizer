@@ -28,14 +28,31 @@ def graph_to_d3_data(
     *,
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
+    show_source: bool = True,
 ) -> dict[str, list[dict[str, str]]]:
-    """Convert a NetworkX graph or trace into D3 nodes and links."""
+    """Convert a graph or trace into D3 data with ontology and source labels."""
 
     graph = _graph_from_value(value)
+
+    def combined_label(primary: Any, source: Any) -> str:
+        primary_text = str(primary)
+        source_text = str(source) if source else ""
+        if not show_source or not source_text:
+            return primary_text
+        return f"{primary_text} — {source_text}"
+
+    def node_source(data: dict[str, Any]) -> str:
+        mentions = data.get("mentions")
+        if isinstance(mentions, (list, tuple)):
+            return "; ".join(str(mention) for mention in mentions if mention)
+        return str(mentions) if mentions else ""
+
     nodes = [
         {
             "id": str(node_id),
-            "label": str(data.get(node_label_attr, node_id)),
+            "label": combined_label(data.get(node_label_attr, node_id), node_source(data)),
+            "ontology_label": str(data.get(node_label_attr, node_id)),
+            "source_fragment": node_source(data),
         }
         for node_id, data in graph.nodes(data=True)
     ]
@@ -45,7 +62,9 @@ def graph_to_d3_data(
             {
                 "source": str(source),
                 "target": str(target),
-                "label": str(data.get(edge_label_attr, "")),
+                "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
+                "predicate": str(data.get("predicate", "")),
+                "source_fragment": str(data.get(edge_label_attr, "")),
             }
             for source, target, _key, data in edges
         ]
@@ -54,7 +73,9 @@ def graph_to_d3_data(
             {
                 "source": str(source),
                 "target": str(target),
-                "label": str(data.get(edge_label_attr, "")),
+                "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
+                "predicate": str(data.get("predicate", "")),
+                "source_fragment": str(data.get(edge_label_attr, "")),
             }
             for source, target, data in graph.edges(data=True)
         ]
@@ -68,6 +89,7 @@ def graph_to_d3_html(
     height: int = 600,
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
+    show_source: bool = True,
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return a self-contained inline HTML fragment containing a D3 graph."""
@@ -83,6 +105,7 @@ def graph_to_d3_html(
             value,
             node_label_attr=node_label_attr,
             edge_label_attr=edge_label_attr,
+            show_source=show_source,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -103,10 +126,10 @@ def graph_to_d3_html(
     .attr("width", "100%")
     .attr("height", height)
     .attr("role", "img")
-    .attr("aria-label", "Ontology graph with proposition-labelled edges");
+    .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and propositions as edge labels.");
+  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and ontology relation IDs as edge labels.");
 
   const link = svg.append("g")
     .attr("aria-hidden", "true")
@@ -182,6 +205,7 @@ def graph_to_d3_javascript(
     height: int = 600,
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
+    show_source: bool = True,
 ) -> str:
     """Return JavaScript that renders the graph into an IPython output area."""
 
@@ -193,6 +217,7 @@ def graph_to_d3_javascript(
             value,
             node_label_attr=node_label_attr,
             edge_label_attr=edge_label_attr,
+            show_source=show_source,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -215,10 +240,10 @@ def graph_to_d3_javascript(
     .attr("width", "100%")
     .attr("height", height)
     .attr("role", "img")
-    .attr("aria-label", "Ontology graph with proposition-labelled edges");
+    .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and propositions as edge labels.");
+  svg.append("desc").text("A force-directed graph with ontology terms as text-only nodes and ontology relation IDs as edge labels.");
 
   const link = svg.append("g")
     .attr("aria-hidden", "true")
@@ -294,6 +319,7 @@ def graph_to_static_svg(
     height: int = 600,
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
+    show_source: bool = True,
 ) -> str:
     """Return an SVG using NetworkX's deterministic Kamada-Kawai layout."""
 
@@ -301,6 +327,12 @@ def graph_to_static_svg(
         raise ValueError("width and height must be positive")
 
     graph = _graph_from_value(value)
+    display_data = graph_to_d3_data(
+        graph,
+        node_label_attr=node_label_attr,
+        edge_label_attr=edge_label_attr,
+        show_source=show_source,
+    )
     node_items = list(graph.nodes(data=True))
     positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
     margin = 48
@@ -362,7 +394,7 @@ def graph_to_static_svg(
         f'viewBox="0 0 {int(width)} {int(height)}" role="img" aria-label="Ontology graph">'
         '<title>Ontology graph</title>'
         '<desc>A deterministic Kamada-Kawai graph with ontology terms as text-only nodes '
-        'and propositions as edge labels.</desc>'
+        'and ontology relation IDs as edge labels.</desc>'
         + "".join(elements)
         + "</svg>"
     )
