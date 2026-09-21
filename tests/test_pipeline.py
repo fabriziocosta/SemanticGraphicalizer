@@ -5,6 +5,12 @@ import pytest
 
 from semantic_graphicalizer import SemanticGraphicalizer
 from semantic_graphicalizer.exceptions import StageOutputError
+from semantic_graphicalizer.pipeline import (
+    ConservativeEntityResolver,
+    ParagraphWindowSegmenter,
+    _format_elapsed,
+)
+from semantic_graphicalizer.types import EntityMention
 
 
 ROOT = Path(__file__).parents[1]
@@ -93,6 +99,8 @@ def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
     assert trace.stats[-1].details["edges"] == trace.graph.number_of_edges()
     edge = next(iter(trace.graph.edges(data=True)))[2]
     assert edge["provenance"]["chunk_id"].endswith("chunk-0")
+    assert edge["provenance"]["start_char"] == 0
+    assert edge["provenance"]["end_char"] == len("A tale.")
 
 
 def test_transformer_display_accepts_trace_graph() -> None:
@@ -108,7 +116,74 @@ def test_verbose_reports_pipeline_stages_and_runtimes(capsys) -> None:
     output = capsys.readouterr().out
     for stage in ("segment", "summarize", "normalize", "decompose", "triple", "integrate", "total"):
         assert f"] {stage}:" in output
-    assert "ms" in output
+    assert any(unit in output for unit in ("ms", "s", "min"))
+
+
+def test_elapsed_time_uses_largest_practical_unit() -> None:
+    assert _format_elapsed(0.125) == "125.0 ms"
+    assert _format_elapsed(5.2309) == "5.2 s"
+    assert _format_elapsed(60) == "1.0 min"
+    assert _format_elapsed(125) == "2.1 min"
+
+
+def test_segmenter_breaks_long_paragraphs_on_word_boundaries() -> None:
+    text = "one two three four five six seven eight nine ten"
+    chunks = ParagraphWindowSegmenter(max_chars=18).segment("document-0", text)
+
+    assert len(chunks) > 1
+    assert all(len(chunk.text) <= 18 for chunk in chunks)
+    assert all(chunk.text and not chunk.text[0].isspace() for chunk in chunks)
+    assert all(text[chunk.start_char:chunk.end_char] == chunk.text for chunk in chunks)
+    assert all(not chunk.text.endswith((" ", "\t")) for chunk in chunks)
+
+
+def test_entity_resolver_stabilizes_determiners_and_possessives() -> None:
+    resolver = ConservativeEntityResolver()
+
+    assert resolver.resolve(EntityMention("the fox", "Animal")) == "animal::fox"
+    assert resolver.resolve(EntityMention("fox's", "Animal")) == "animal::fox"
+    assert resolver.resolve(EntityMention("fox", "Human")) == "human::fox"
+
+
+def test_model_failures_are_retried_and_wrapped() -> None:
+    class FlakyModel(FakeModel):
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, *, stage, prompt, schema, context):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("temporary provider failure")
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    model = FlakyModel()
+    graph = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+        model,
+        retry_backoff=0,
+    ).fit_transform(["A tale."])[0]
+    assert graph.number_of_edges() == 1
+    assert model.calls == 6
+
+    class AlwaysFailModel(FakeModel):
+        def generate(self, **kwargs):
+            raise RuntimeError("provider unavailable")
+
+    with pytest.raises(StageOutputError, match=r"after 2 attempt\(s\)"):
+        SemanticGraphicalizer(
+            ROOT / "configs/ontologies/aesop.yaml",
+            ROOT / "configs/prompts/aesop.yaml",
+            AlwaysFailModel(),
+            max_retries=1,
+            retry_backoff=0,
+        ).fit_transform(["A tale."])
+
+
+def test_fit_transform_accepts_single_use_iterators() -> None:
+    documents = (document for document in ["A tale."])
+    graphs = make_transformer().fit_transform(documents)
+    assert len(graphs) == 1
 
 
 def test_verbose_false_suppresses_progress_output(capsys) -> None:
@@ -158,3 +233,27 @@ def test_default_model_factory_is_used_when_model_is_omitted(monkeypatch) -> Non
         ROOT / "configs/prompts/aesop.yaml",
     ).fit(["A tale."])
     assert transformer.pipeline_.model is created[0]
+
+
+def test_triple_schema_encodes_relation_endpoint_constraints() -> None:
+    class SchemaCapture(FakeModel):
+        def __init__(self):
+            self.schemas = {}
+
+        def generate(self, *, stage, prompt, schema, context):
+            self.schemas[stage] = schema
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    model = SchemaCapture()
+    make_transformer(model).fit_transform(["A tale."])
+
+    branches = model.schemas["triple"]["properties"]["triples"]["items"]["anyOf"]
+    by_relation = {
+        branch["properties"]["predicate"]["enum"][0]: branch
+        for branch in branches
+    }
+    has_trait = by_relation["has_trait"]["properties"]
+    assert has_trait["subject"]["properties"]["label"]["enum"] == [
+        "Animal", "Character", "Human",
+    ]
+    assert has_trait["object"]["properties"]["label"]["enum"] == ["Trait"]

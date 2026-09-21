@@ -6,7 +6,9 @@ from semantic_graphicalizer import (
     graph_to_d3_data,
     graph_to_d3_html,
     graph_to_d3_iframe,
+    graph_to_d3_javascript,
     graph_to_static_svg,
+    graph_to_text,
 )
 
 
@@ -74,10 +76,24 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "d3.zoom()" in html
     assert "scaleExtent([0.25, 4])" in html
     assert 'event => viewport.attr("transform", event.transform)' in html
+    assert 'selectAll("tspan").attr("x", x)' in html
     assert "d.pinned = true" in html
     assert '.on("dblclick"' in html
     assert "drag the background to pan" in html
     assert "<circle" not in html
+
+
+def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal")
+
+    html = graph_to_d3_html(graph)
+    tuned = graph_to_d3_html(graph, charge_strength=-80)
+
+    assert 'force("charge", d3.forceManyBody().strength(-180.0))' in html
+    assert 'force("charge", d3.forceManyBody().strength(-80.0))' in tuned
+    with pytest.raises(ValueError, match="charge_strength"):
+        graph_to_d3_html(graph, charge_strength=10)
 
 
 def test_labels_use_new_lines_and_wrap_at_max_width() -> None:
@@ -138,8 +154,23 @@ def test_d3_iframe_contains_force_layout_document() -> None:
     iframe = graph_to_d3_iframe(graph)
 
     assert iframe.startswith('<iframe title="Ontology graph"')
+    assert 'height="900"' in iframe
     assert "srcdoc=" in iframe
     assert "d3.forceSimulation" in iframe
+
+
+def test_d3_javascript_reuses_interactive_renderer() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+
+    javascript = graph_to_d3_javascript(graph)
+
+    assert javascript.startswith("(() => {")
+    assert "element.appendChild(root)" in javascript
+    assert "d3.forceSimulation" in javascript
+    assert "d3.zoom()" in javascript
+    assert "selectAll(\"tspan\").attr(\"x\", d.x)" in javascript
+    assert "<script" not in javascript
 
 
 def test_visualization_can_hide_source_fragments() -> None:
@@ -191,3 +222,29 @@ def test_static_display_uses_kamada_kawai_and_text_only_svg() -> None:
 def test_display_graph_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError, match="dynamic.*static"):
         display_graph(nx.MultiDiGraph(), mode="unknown")
+
+
+def test_text_mode_lists_nodes_mentions_and_relations() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal", mentions=["the fox"])
+    graph.add_node("action", label="Action", mentions=["an action"])
+    graph.add_edge("fox", "action", predicate="performs", label="The fox performs an action.")
+
+    rendered = graph_to_text(graph)
+
+    assert rendered == (
+        "Animal\n"
+        "\tthe fox\n"
+        "\t\tperforms - Action\n"
+        "Action\n"
+        "\tan action"
+    )
+
+
+def test_display_graph_supports_text_mode() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+
+    rendered = display_graph(graph, mode="text")
+
+    assert rendered.data == "Animal\n\tfox"

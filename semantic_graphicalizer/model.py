@@ -54,7 +54,13 @@ class OpenAIModelClient:
     explicit client is provided. The default model is ``gpt-4.1-mini``.
     """
 
-    def __init__(self, model: str = DEFAULT_OPENAI_MODEL, client: Any = None) -> None:
+    def __init__(
+        self,
+        model: str = DEFAULT_OPENAI_MODEL,
+        client: Any = None,
+        *,
+        request_options: Mapping[str, Any] | None = None,
+    ) -> None:
         if not isinstance(model, str) or not model.strip():
             raise ValueError("model must be a non-empty string")
         if client is None:
@@ -66,8 +72,11 @@ class OpenAIModelClient:
                     "Install the project dependencies or provide a custom model client."
                 ) from exc
             client = OpenAI()
+        if request_options is not None and not isinstance(request_options, Mapping):
+            raise TypeError("request_options must be a mapping")
         self.model = model
         self.client = client
+        self.request_options = dict(request_options or {})
 
     def generate(
         self,
@@ -78,10 +87,10 @@ class OpenAIModelClient:
         context: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         del context
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            text={
+        request = {
+            "model": self.model,
+            "input": prompt,
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": f"semantic_graphicalizer_{stage}",
@@ -89,9 +98,13 @@ class OpenAIModelClient:
                     "schema": dict(schema),
                 }
             },
-            store=False,
-        )
+            "store": False,
+        }
+        request.update(self.request_options)
+        response = self.client.responses.create(**request)
         output_text = getattr(response, "output_text", None)
+        if not isinstance(output_text, str) or not output_text.strip():
+            output_text = self._nested_output_text(response)
         if not isinstance(output_text, str) or not output_text.strip():
             raise ValueError(f"OpenAI returned no structured output for stage '{stage}'")
         try:
@@ -101,6 +114,23 @@ class OpenAIModelClient:
         if not isinstance(result, Mapping):
             raise ValueError(f"OpenAI returned a non-object JSON result for stage '{stage}'")
         return result
+
+    @staticmethod
+    def _nested_output_text(response: Any) -> str | None:
+        """Support SDK-compatible response objects without ``output_text``."""
+
+        output = response.get("output") if isinstance(response, Mapping) else getattr(response, "output", None)
+        if not isinstance(output, (list, tuple)):
+            return None
+        for item in output:
+            content = item.get("content") if isinstance(item, Mapping) else getattr(item, "content", None)
+            if not isinstance(content, (list, tuple)):
+                continue
+            for block in content:
+                text = block.get("text") if isinstance(block, Mapping) else getattr(block, "text", None)
+                if isinstance(text, str) and text.strip():
+                    return text
+        return None
 
 
 def as_model_client(model: ModelClient | Callable[..., Mapping[str, Any]]) -> ModelClient:

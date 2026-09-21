@@ -64,12 +64,18 @@ class ParagraphWindowSegmenter:
             if pending_start is None or pending_end is None:
                 return
             chunk_number = len(chunks)
+            chunk_start = pending_start
+            while chunk_start < pending_end and text[chunk_start].isspace():
+                chunk_start += 1
+            chunk_end = pending_end
+            while chunk_end > chunk_start and text[chunk_end - 1].isspace():
+                chunk_end -= 1
             chunks.append(Chunk(
                 document_id=document_id,
                 chunk_id=f"{document_id}:chunk-{chunk_number}",
-                text=text[pending_start:pending_end].strip(),
-                start_char=pending_start,
-                end_char=pending_end,
+                text=text[chunk_start:chunk_end],
+                start_char=chunk_start,
+                end_char=chunk_end,
             ))
             pending_start = pending_end = None
 
@@ -80,16 +86,38 @@ class ParagraphWindowSegmenter:
                 window_start = start
                 while window_start < end:
                     window_end = min(window_start + self.max_chars, end)
+                    if window_end < end:
+                        boundary = max(
+                            text.rfind(" ", window_start + 1, window_end + 1),
+                            text.rfind("\t", window_start + 1, window_end + 1),
+                        )
+                        if boundary > window_start:
+                            window_end = boundary
+                    chunk_start = window_start
+                    while chunk_start < window_end and text[chunk_start].isspace():
+                        chunk_start += 1
+                    chunk_end = window_end
+                    while chunk_end > chunk_start and text[chunk_end - 1].isspace():
+                        chunk_end -= 1
                     chunks.append(Chunk(
                         document_id=document_id,
                         chunk_id=f"{document_id}:chunk-{len(chunks)}",
-                        text=text[window_start:window_end].strip(),
-                        start_char=window_start,
-                        end_char=window_end,
+                        text=text[chunk_start:chunk_end],
+                        start_char=chunk_start,
+                        end_char=chunk_end,
                     ))
                     if window_end == end:
                         break
-                    window_start = window_end - self.overlap
+                    window_start = max(chunk_start + 1, window_end - self.overlap)
+                    while window_start < end and text[window_start].isspace():
+                        window_start += 1
+                    if window_start < end and window_start > start and not text[window_start - 1].isspace():
+                        boundary = max(
+                            text.rfind(" ", start, window_start),
+                            text.rfind("\t", start, window_start),
+                        )
+                        if boundary >= start:
+                            window_start = boundary + 1
                 continue
             if pending_start is None:
                 pending_start, pending_end = start, end
@@ -106,10 +134,10 @@ class ConservativeEntityResolver:
     """Resolve only matching normalized mentions with matching ontology terms."""
 
     def resolve(self, mention: EntityMention) -> str:
-        if mention.key:
-            normalized = mention.key
-        else:
-            normalized = re.sub(r"[^a-z0-9]+", "_", mention.mention.lower()).strip("_")
+        normalized = mention.key or mention.mention
+        normalized = re.sub(r"['’]s\b", "", normalized.lower())
+        normalized = re.sub(r"^\s*(?:the|a|an)\s+", "", normalized)
+        normalized = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
         normalized = normalized or "unnamed_entity"
         label = re.sub(r"[^a-z0-9]+", "_", mention.ontology_term.lower()).strip("_")
         return f"{label}::{normalized}"
@@ -204,6 +232,16 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+def _format_elapsed(elapsed_seconds: float) -> str:
+    """Format elapsed time using the largest practical unit."""
+
+    if elapsed_seconds >= 60:
+        return f"{elapsed_seconds / 60:.1f} min"
+    if elapsed_seconds >= 1:
+        return f"{elapsed_seconds:.1f} s"
+    return f"{elapsed_seconds * 1000:.1f} ms"
+
+
 def _as_mapping(value: Any, stage: str, document_id: str, chunk_id: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise StageOutputError(stage, "response must be a mapping", document_id=document_id, chunk_id=chunk_id)
@@ -242,9 +280,15 @@ class SemanticPipeline:
     segmenter: Segmenter
     resolver: EntityResolver
     verbose: bool = True
+    max_retries: int = 2
+    retry_backoff: float = 0.25
 
     def __post_init__(self) -> None:
         self.model = as_model_client(self.model)
+        if isinstance(self.max_retries, bool) or not isinstance(self.max_retries, int) or self.max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        if isinstance(self.retry_backoff, bool) or not isinstance(self.retry_backoff, (int, float)) or self.retry_backoff < 0:
+            raise ValueError("retry_backoff must be non-negative")
 
     def _record_stat(
         self,
@@ -277,7 +321,7 @@ class SemanticPipeline:
         print(
             f"[{document_id}{scope}] {stage}: "
             f"{input_count} -> {output_count} | "
-            f"{elapsed_seconds * 1000:.1f} ms{suffix}"
+            f"{_format_elapsed(elapsed_seconds)}{suffix}"
         )
 
     def _generate(self, stage: str, prompt_values: dict[str, str], *, chunk: Chunk) -> Mapping[str, Any]:
@@ -285,22 +329,51 @@ class SemanticPipeline:
         schema = deepcopy(_SCHEMAS[stage])
         if stage == "triple":
             triple_schema = schema["properties"]["triples"]["items"]
-            triple_schema["properties"]["predicate"] = {
-                "type": "string",
-                "enum": sorted(self.ontology.relation_ids),
-            }
-            entity_label_schema = {
-                "type": "string",
-                "enum": sorted(self.ontology.term_ids),
-            }
-            triple_schema["properties"]["subject"]["properties"]["label"] = entity_label_schema
-            triple_schema["properties"]["object"]["properties"]["label"] = entity_label_schema
-        response = self.model.generate(
-            stage=stage,
-            prompt=prompt,
-            schema=schema,
-            context={"document_id": chunk.document_id, "chunk_id": chunk.chunk_id},
-        )
+            all_term_ids = sorted(self.ontology.term_ids)
+            relation_schemas = []
+            for relation in self.ontology.relations:
+                relation_schema = deepcopy(triple_schema)
+                subject_schema = deepcopy(relation_schema["properties"]["subject"])
+                object_schema = deepcopy(relation_schema["properties"]["object"])
+                relation_schema["properties"]["predicate"] = {
+                    "type": "string",
+                    "enum": [relation.id],
+                }
+                subject_schema["properties"]["label"] = {
+                    "type": "string",
+                    "enum": sorted(relation.source_terms) or all_term_ids,
+                }
+                object_schema["properties"]["label"] = {
+                    "type": "string",
+                    "enum": sorted(relation.target_terms) or all_term_ids,
+                }
+                relation_schema["properties"]["subject"] = subject_schema
+                relation_schema["properties"]["object"] = object_schema
+                relation_schemas.append(relation_schema)
+            schema["properties"]["triples"]["items"] = {"anyOf": relation_schemas}
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.model.generate(
+                    stage=stage,
+                    prompt=prompt,
+                    schema=schema,
+                    context={"document_id": chunk.document_id, "chunk_id": chunk.chunk_id},
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt == self.max_retries:
+                    raise StageOutputError(
+                        stage,
+                        f"model generation failed after {attempt + 1} attempt(s): {exc}",
+                        document_id=chunk.document_id,
+                        chunk_id=chunk.chunk_id,
+                    ) from exc
+                if self.retry_backoff:
+                    time.sleep(self.retry_backoff * (2 ** attempt))
+        else:  # pragma: no cover - loop always breaks or raises
+            raise AssertionError(last_error)
         return _as_mapping(response, stage, chunk.document_id, chunk.chunk_id)
 
     def _summarize(self, chunk: Chunk) -> Summary:
@@ -422,6 +495,17 @@ class SemanticPipeline:
 
     def _integrate(self, document_id: str, document_text: str, triples: Sequence[Triple]) -> nx.MultiDiGraph:
         graph = nx.MultiDiGraph(document_id=document_id, document_text=document_text)
+
+        def provenance(triple: Triple) -> dict[str, Any]:
+            return {
+                "document_id": document_id,
+                "chunk_id": triple.chunk.chunk_id,
+                "start_char": triple.chunk.start_char,
+                "end_char": triple.chunk.end_char,
+                "source_text": triple.chunk.text,
+                "proposition_id": triple.proposition_id,
+            }
+
         for index, triple in enumerate(triples):
             subject_id = self.resolver.resolve(triple.subject)
             object_id = self.resolver.resolve(triple.object)
@@ -440,13 +524,9 @@ class SemanticPipeline:
                 node = graph.nodes[node_id]
                 if entity.mention not in node["mentions"]:
                     node["mentions"].append(entity.mention)
-                provenance = {
-                    "document_id": document_id,
-                    "chunk_id": triple.chunk.chunk_id,
-                    "source_text": triple.chunk.text,
-                }
-                if provenance not in node["provenance"]:
-                    node["provenance"].append(provenance)
+                node_provenance = provenance(triple)
+                if node_provenance not in node["provenance"]:
+                    node["provenance"].append(node_provenance)
             graph.add_edge(
                 subject_id,
                 object_id,
@@ -458,11 +538,7 @@ class SemanticPipeline:
                 qualification=triple.qualification,
                 document_id=document_id,
                 document_text=document_text,
-                provenance={
-                    "document_id": document_id,
-                    "chunk_id": triple.chunk.chunk_id,
-                    "source_text": triple.chunk.text,
-                },
+                provenance=provenance(triple),
             )
         return graph
 

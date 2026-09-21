@@ -34,3 +34,18 @@ def test_openai_client_uses_gpt_4_1_mini_and_structured_outputs() -> None:
     assert responses.calls[0]["model"] == "gpt-4.1-mini"
     assert responses.calls[0]["text"]["format"]["type"] == "json_schema"
     assert responses.calls[0]["store"] is False
+
+
+def test_openai_client_accepts_request_options_and_nested_sdk_output() -> None:
+    responses = FakeResponses()
+    responses.create = lambda **kwargs: (  # type: ignore[method-assign]
+        responses.calls.append(kwargs)
+        or {"output": [{"content": [{"text": '{"summary": "Nested."}'}]}]}
+    )
+    client = SimpleNamespace(responses=responses)
+    model = OpenAIModelClient(client=client, request_options={"timeout": 12})
+
+    result = model.generate(stage="summarize", prompt="Summarize.", schema={}, context={})
+
+    assert result == {"summary": "Nested."}
+    assert responses.calls[0]["timeout"] == 12

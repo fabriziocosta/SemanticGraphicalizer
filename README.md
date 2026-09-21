@@ -69,3 +69,8 @@ IDs.
 Progress reporting is enabled by default. Set `verbose=False` to suppress it;
 stage timings and counts remain available on each `DocumentTrace.stats` item
 when using `transform_with_trace`.
+
+Long paragraphs are split at word boundaries, and transient model-provider
+failures are retried with exponential backoff. Configure `max_retries` and
+`retry_backoff` on `SemanticGraphicalizer` when a provider needs different
+limits; set `max_retries=0` to disable retries.

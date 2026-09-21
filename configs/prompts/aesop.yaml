@@ -51,6 +51,10 @@ stages:
       Return one or more triples for the propositions below. Use exact ontology
       relation IDs. Entity labels must be ontology term IDs, and a proposition
       edge label should preserve the complete claim rather than only a verb.
+      For every triple, obey the relation's source and target constraints
+      exactly: the subject label must be in its source list and the object
+      label must be in its target list. Never use a generic label such as
+      Animal when the selected relation requires a more specific target term.
 
       Ontology:
       {ontology}
