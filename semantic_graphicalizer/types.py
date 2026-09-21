@@ -57,6 +57,9 @@ class Triple:
     proposition: str
     confidence: float | None = None
     qualification: dict[str, Any] = field(default_factory=dict)
+    source_text: str = ""
+    source_start_char: int | None = None
+    source_end_char: int | None = None
 
 
 @dataclass(frozen=True)

@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+
 import networkx as nx
 import pytest
 
@@ -54,6 +57,7 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
             "label": "interacts_with\nThe fox interacts with the crow.",
             "predicate": "interacts_with",
             "source_fragment": "The fox interacts with the crow.",
+            "directed": True,
         }],
     }
 
@@ -69,6 +73,8 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert '.selectAll("text")' in html
     assert 'attr("stroke", "#9aa0a6")' in html
     assert 'attr("stroke-width", 1)' in html
+    assert 'attr("marker-end", d => d.directed' in html
+    assert 'append("marker")' in html
     assert 'force("component-order"' in html
     assert "nodeRadius" in html
     assert "setMultilineText" in html
@@ -173,6 +179,20 @@ def test_d3_javascript_reuses_interactive_renderer() -> None:
     assert "<script" not in javascript
 
 
+def test_d3_javascript_is_valid_javascript_when_node_is_available(tmp_path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+    script_path = tmp_path / "graph.js"
+    script_path.write_text(graph_to_d3_javascript(graph), encoding="utf-8")
+
+    checked = subprocess.run([node, "--check", str(script_path)], capture_output=True, text=True)
+
+    assert checked.returncode == 0, checked.stderr
+
+
 def test_visualization_can_hide_source_fragments() -> None:
     graph = nx.MultiDiGraph()
     graph.add_edge("fox", "crow", label="The fox interacts with the crow.", predicate="interacts_with")
@@ -233,11 +253,10 @@ def test_text_mode_lists_nodes_mentions_and_relations() -> None:
     rendered = graph_to_text(graph)
 
     assert rendered == (
-        "Animal\n"
-        "\tthe fox\n"
-        "\t\tperforms - Action\n"
-        "Action\n"
-        "\tan action"
+        "Animal: the fox\n"
+        "    performs: Action: an action\n"
+        "Action: an action\n"
+        "    ← performs: Animal: the fox"
     )
 
 
@@ -247,4 +266,4 @@ def test_display_graph_supports_text_mode() -> None:
 
     rendered = display_graph(graph, mode="text")
 
-    assert rendered.data == "Animal\n\tfox"
+    assert rendered.data == "Animal: fox"

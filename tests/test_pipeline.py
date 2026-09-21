@@ -1,4 +1,5 @@
 from pathlib import Path
+from hashlib import sha256
 
 import networkx as nx
 import pytest
@@ -11,6 +12,7 @@ from semantic_graphicalizer.pipeline import (
     _format_elapsed,
 )
 from semantic_graphicalizer.types import EntityMention
+from semantic_graphicalizer.types import Chunk
 
 
 ROOT = Path(__file__).parents[1]
@@ -59,11 +61,12 @@ def test_transformer_returns_one_multidigraph_per_document() -> None:
     assert len(edges) == 1
     assert edges[0][3]["label"] == "The fox interacts with the crow."
     assert edges[0][3]["predicate"] == "interacts_with"
-    assert graph.graph["document_id"] == "document-0"
+    expected_document_id = f"document-{sha256('The fox met the crow.'.encode()).hexdigest()[:12]}"
+    assert graph.graph["document_id"] == expected_document_id
     assert graph.graph["document_text"] == "The fox met the crow."
-    assert graph.nodes["animal::fox"]["document_id"] == "document-0"
+    assert graph.nodes["animal::fox"]["document_id"] == expected_document_id
     assert graph.nodes["animal::fox"]["document_text"] == "The fox met the crow."
-    assert edges[0][3]["document_id"] == "document-0"
+    assert edges[0][3]["document_id"] == expected_document_id
     assert edges[0][3]["document_text"] == "The fox met the crow."
 
 
@@ -87,7 +90,7 @@ def test_transformer_preserves_multiple_edges() -> None:
 
 
 def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
-    trace = make_transformer().fit(["A tale."]).transform_with_trace(["A tale."])[0]
+    trace = make_transformer().fit(["The fox met the crow."]).transform_with_trace(["The fox met the crow."])[0]
     assert trace.summaries[0].text
     assert trace.normalized[0].text
     assert trace.propositions[0].text
@@ -100,7 +103,39 @@ def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
     edge = next(iter(trace.graph.edges(data=True)))[2]
     assert edge["provenance"]["chunk_id"].endswith("chunk-0")
     assert edge["provenance"]["start_char"] == 0
-    assert edge["provenance"]["end_char"] == len("A tale.")
+    assert edge["provenance"]["end_char"] == len("The fox met the crow.")
+    assert edge["provenance"]["source_text"] == "The fox met the crow."
+    node_provenance = trace.graph.nodes["animal::fox"]["provenance"][0]
+    assert node_provenance["mention_start_char"] == 4
+    assert node_provenance["mention_end_char"] == 7
+
+
+def test_document_ids_are_stable_across_transform_batches() -> None:
+    transformer = make_transformer().fit(["A tale."])
+    first = transformer.transform(["A tale."])[0]
+    second = transformer.transform(["A tale."])[0]
+
+    assert first.graph["document_id"] == second.graph["document_id"]
+
+
+def test_overlapping_duplicate_triples_are_integrated_once() -> None:
+    class DuplicateSegmenter:
+        def segment(self, document_id, text):
+            return [
+                Chunk(document_id, f"{document_id}:chunk-0", text, 0, len(text)),
+                Chunk(document_id, f"{document_id}:chunk-1", text, 0, len(text)),
+            ]
+
+    transformer = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+        FakeModel(),
+        segmenter=DuplicateSegmenter(),
+    )
+
+    graph = transformer.fit_transform(["The fox met the crow."])[0]
+
+    assert graph.number_of_edges() == 1
 
 
 def test_transformer_display_accepts_trace_graph() -> None:
@@ -153,7 +188,7 @@ def test_model_failures_are_retried_and_wrapped() -> None:
         def generate(self, *, stage, prompt, schema, context):
             self.calls += 1
             if self.calls < 3:
-                raise RuntimeError("temporary provider failure")
+                raise TimeoutError("temporary provider failure")
             return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
 
     model = FlakyModel()
@@ -168,7 +203,7 @@ def test_model_failures_are_retried_and_wrapped() -> None:
 
     class AlwaysFailModel(FakeModel):
         def generate(self, **kwargs):
-            raise RuntimeError("provider unavailable")
+            raise TimeoutError("provider unavailable")
 
     with pytest.raises(StageOutputError, match=r"after 2 attempt\(s\)"):
         SemanticGraphicalizer(
@@ -178,6 +213,25 @@ def test_model_failures_are_retried_and_wrapped() -> None:
             max_retries=1,
             retry_backoff=0,
         ).fit_transform(["A tale."])
+
+    class NonRetryableModel(FakeModel):
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **kwargs):
+            self.calls += 1
+            raise ValueError("invalid request")
+
+    non_retryable = NonRetryableModel()
+    with pytest.raises(StageOutputError, match="after 1 attempt"):
+        SemanticGraphicalizer(
+            ROOT / "configs/ontologies/aesop.yaml",
+            ROOT / "configs/prompts/aesop.yaml",
+            non_retryable,
+            max_retries=3,
+            retry_backoff=0,
+        ).fit_transform(["A tale."])
+    assert non_retryable.calls == 1
 
 
 def test_fit_transform_accepts_single_use_iterators() -> None:

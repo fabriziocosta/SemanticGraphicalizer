@@ -30,6 +30,10 @@ their provenance fields. Edges store the complete proposition in
 Nodes carry a first-seen `sequence`; visual layouts order disconnected
 components from left to right by the earliest node sequence in the document.
 `transform_with_trace` exposes all intermediate stages and provenance.
+Document IDs are stable content-derived IDs by default; pass
+`document_id_fn=(text, index) -> str` when an external identifier is available.
+Node and edge provenance includes source spans when the model's source text can
+be aligned to the original document.
 
 Install the package and development tools with Python 3.12:
 
@@ -59,7 +63,12 @@ layout or a deterministic static NetworkX Kamada-Kawai layout:
 ```python
 graphicalizer.display(graphs[0], mode="dynamic")
 graphicalizer.display(graphs[0], mode="static")
+graphicalizer.display(graphs[0], mode="text")
 ```
+
+Text mode prints each node as `Ontology: surface text`, followed by indented
+`relation: TargetOntology: target text` lines. Incoming relations are marked
+with `←`.
 
 The default view shows both values: ontology IDs plus surface mentions on
 text-only nodes, and ontology relation IDs plus proposition fragments on thin

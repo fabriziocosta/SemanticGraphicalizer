@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from semantic_graphicalizer.model import DEFAULT_OPENAI_MODEL, OpenAIModelClient
 
 
@@ -49,3 +51,10 @@ def test_openai_client_accepts_request_options_and_nested_sdk_output() -> None:
 
     assert result == {"summary": "Nested."}
     assert responses.calls[0]["timeout"] == 12
+
+
+def test_openai_client_protects_structured_request_fields() -> None:
+    client = SimpleNamespace(responses=FakeResponses())
+
+    with pytest.raises(ValueError, match="cannot override"):
+        OpenAIModelClient(client=client, request_options={"text": {}})

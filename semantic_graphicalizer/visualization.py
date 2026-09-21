@@ -86,29 +86,42 @@ def graph_to_text(
             surface_text = "; ".join(str(mention) for mention in mentions if mention)
         else:
             surface_text = str(mentions) if mentions else ""
-        lines.append(node_label)
-        lines.append(f"\t{surface_text}" if surface_text else "\t")
+        lines.append(f"{node_label}: {surface_text}" if surface_text else node_label)
 
         if graph.is_directed():
-            relation_items = (
-                (target_id, relation_data)
+            relation_items = [
+                (target_id, relation_data, "outgoing")
                 for _, target_id, relation_data in graph.out_edges(node_id, data=True)
+            ]
+            relation_items.extend(
+                (source_id, relation_data, "incoming")
+                for source_id, _, relation_data in graph.in_edges(node_id, data=True)
+                if source_id != node_id
             )
         else:
-            relation_items = (
+            relation_items = [
                 (
                     target_id if source_id == node_id else source_id,
                     relation_data,
+                    "outgoing",
                 )
                 for source_id, target_id, relation_data in graph.edges(node_id, data=True)
-            )
-        for target_id, relation_data in relation_items:
+            ]
+        for target_id, relation_data, direction in relation_items:
             predicate = relation_data.get("predicate") or relation_data.get(edge_label_attr) or "relation"
             target_data = graph.nodes[target_id]
             target_label = target_data.get(node_label_attr, target_id)
-            lines.append(f"\t\t{predicate} - {target_label}")
+            target_mentions = target_data.get("mentions")
+            if isinstance(target_mentions, (list, tuple)):
+                target_text = "; ".join(str(mention) for mention in target_mentions if mention)
+            else:
+                target_text = str(target_mentions) if target_mentions else ""
+            direction_prefix = "← " if direction == "incoming" else ""
+            relation_text = f"{predicate}: {target_label}"
+            if target_text:
+                relation_text += f": {target_text}"
+            lines.append(f"    {direction_prefix}{relation_text}")
     return "\n".join(lines)
-    return graph
 
 
 def graph_to_d3_data(
@@ -174,6 +187,7 @@ def graph_to_d3_data(
                 "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
                 "predicate": str(data.get("predicate", "")),
                 "source_fragment": str(data.get(edge_label_attr, "")),
+                "directed": graph.is_directed(),
             }
             for source, target, _key, data in edges
         ]
@@ -185,6 +199,7 @@ def graph_to_d3_data(
                 "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
                 "predicate": str(data.get("predicate", "")),
                 "source_fragment": str(data.get(edge_label_attr, "")),
+                "directed": graph.is_directed(),
             }
             for source, target, data in graph.edges(data=True)
         ]
@@ -224,12 +239,32 @@ def graph_to_d3_html(
     ).replace("<", "\\u003c")
     width_json = json.dumps(int(width))
     height_json = json.dumps(int(height))
-
+    script = _d3_script(
+        payload=payload,
+        width_json=width_json,
+        height_json=height_json,
+        charge_strength=charge_strength,
+        root_setup=f"  const root = document.getElementById({json.dumps(root_id)});",
+    )
     return f'''<div id="{root_id}" role="img" aria-label="Ontology graph"></div>
 <script src="{d3_url}"></script>
 <script>
-(() => {{
-  const root = document.getElementById({json.dumps(root_id)});
+{script}
+</script>'''
+
+
+def _d3_script(
+    *,
+    payload: str,
+    width_json: str,
+    height_json: str,
+    charge_strength: float,
+    root_setup: str,
+) -> str:
+    """Return the shared D3 program for HTML and notebook mounts."""
+
+    return f'''(() => {{
+{root_setup}
   const data = {payload};
   const width = {width_json};
   const height = {height_json};
@@ -240,6 +275,20 @@ def graph_to_d3_html(
     .attr("height", height)
     .attr("role", "img")
     .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
+
+  const arrowId = `${{root.id}}-arrow`;
+  svg.append("defs")
+    .append("marker")
+    .attr("id", arrowId)
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 9)
+    .attr("refY", 0)
+    .attr("markerWidth", 6)
+    .attr("markerHeight", 6)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("d", "M0,-5L10,0L0,5")
+    .attr("fill", "#9aa0a6");
 
   svg.append("title").text("Ontology graph");
   svg.append("desc").text("A force-directed graph. Scroll to zoom, drag the background to pan, drag nodes to move and pin them, and double-click a node to unpin it.");
@@ -272,7 +321,8 @@ def graph_to_d3_html(
     .join("line")
     .attr("stroke", "#9aa0a6")
     .attr("stroke-width", 1)
-    .attr("stroke-opacity", 0.85);
+    .attr("stroke-opacity", 0.85)
+    .attr("marker-end", d => d.directed ? `url(#${{arrowId}})` : null);
 
   const edgeLabel = viewport.append("g")
     .selectAll("text")
@@ -361,8 +411,7 @@ def graph_to_d3_html(
           d3.select(this).selectAll("tspan").attr("x", d.x);
         }});
     }});
-}})();
-</script>'''
+}})();'''
 
 
 def graph_to_d3_javascript(
@@ -376,40 +425,36 @@ def graph_to_d3_javascript(
     max_width: int = 80,
     charge_strength: float = -180,
 ) -> str:
-    """Return JavaScript that renders the graph into an IPython output area.
+    """Return JavaScript that renders the graph into an IPython output area."""
 
-    The rendering implementation is shared with :func:`graph_to_d3_html`; only
-    the mount-point setup differs between the two notebook environments.
-    """
-
-    html = graph_to_d3_html(
-        value,
-        width=width,
-        height=height,
-        node_label_attr=node_label_attr,
-        edge_label_attr=edge_label_attr,
-        show_source=show_source,
-        max_width=max_width,
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    charge_strength = _validate_charge_strength(charge_strength)
+    root_id = f"semantic-graphicalizer-{uuid4().hex}"
+    payload = json.dumps(
+        graph_to_d3_data(
+            value,
+            node_label_attr=node_label_attr,
+            edge_label_attr=edge_label_attr,
+            show_source=show_source,
+            max_width=max_width,
+        ),
+        ensure_ascii=False,
+    ).replace("<", "\\u003c")
+    return _d3_script(
+        payload=payload,
+        width_json=json.dumps(int(width)),
+        height_json=json.dumps(int(height)),
         charge_strength=charge_strength,
-    )
-    root_marker = '<div id="'
-    _, _, root_tail = html.partition(root_marker)
-    root_id, _, _ = root_tail.partition('"')
-    if not root_id:
-        raise ValueError("generated graph HTML has no mount point")
-
-    script_start = html.index("<script>") + len("<script>")
-    script_end = html.rindex("</script>")
-    script = html[script_start:script_end]
-    root_lookup = f"  const root = document.getElementById({json.dumps(root_id)});"
-    root_setup = f"""  const root = document.createElement("div");
+        root_setup=f"""  const root = document.createElement("div");
   root.id = {json.dumps(root_id)};
   root.setAttribute("role", "img");
   root.setAttribute("aria-label", "Ontology graph");
-  element.appendChild(root);"""
-    if root_lookup not in script:
-        raise ValueError("generated graph HTML has an unexpected mount point")
-    return script.replace(root_lookup, root_setup, 1).strip()
+  element.appendChild(root);""",
+    )
+
+
+
 
 
 def graph_to_d3_iframe(

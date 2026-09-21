@@ -262,6 +262,35 @@ def _as_float(value: Any, field: str, stage: str, document_id: str, chunk_id: st
     return float(value)
 
 
+def _find_text_span(text: str, value: str) -> tuple[int, int] | None:
+    """Find a case-insensitive span while allowing flexible whitespace."""
+
+    value = value.strip()
+    if not value:
+        return None
+    direct_start = text.casefold().find(value.casefold())
+    if direct_start >= 0:
+        return direct_start, direct_start + len(value)
+    pattern = r"\\s+".join(re.escape(part) for part in value.split())
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    return match.span() if match else None
+
+
+def _retryable_model_error(error: Exception) -> bool:
+    """Return whether a model failure is likely safe to retry."""
+
+    if isinstance(error, (TimeoutError, ConnectionError, OSError)):
+        return True
+    status_code = getattr(error, "status_code", None)
+    if status_code in {408, 409, 429} or isinstance(status_code, int) and status_code >= 500:
+        return True
+    error_name = type(error).__name__.casefold()
+    return any(
+        marker in error_name
+        for marker in ("timeout", "connection", "ratelimit", "rate_limit", "internalserver")
+    )
+
+
 def _entity(value: Any, stage: str, document_id: str, chunk_id: str) -> EntityMention:
     item = _as_mapping(value, stage, document_id, chunk_id)
     mention = _as_text(item.get("mention"), "mention", stage, document_id, chunk_id)
@@ -363,7 +392,7 @@ class SemanticPipeline:
                 break
             except Exception as exc:
                 last_error = exc
-                if attempt == self.max_retries:
+                if attempt == self.max_retries or not _retryable_model_error(exc):
                     raise StageOutputError(
                         stage,
                         f"model generation failed after {attempt + 1} attempt(s): {exc}",
@@ -480,6 +509,17 @@ class SemanticPipeline:
             qualification = item.get("qualification", proposition.qualification)
             if not isinstance(qualification, dict):
                 raise StageOutputError("triple", "'qualification' must be a mapping", document_id=normalized.chunk.document_id, chunk_id=normalized.chunk.chunk_id)
+            source_span = _find_text_span(normalized.chunk.text, proposition.source_text)
+            source_start = (
+                normalized.chunk.start_char + source_span[0]
+                if source_span is not None
+                else normalized.chunk.start_char
+            )
+            source_end = (
+                normalized.chunk.start_char + source_span[1]
+                if source_span is not None
+                else normalized.chunk.end_char
+            )
             triples.append(Triple(
                 triple_id=_as_text(item.get("id", f"t-{index}"), "id", "triple", normalized.chunk.document_id, normalized.chunk.chunk_id),
                 proposition_id=proposition_id,
@@ -490,25 +530,58 @@ class SemanticPipeline:
                 proposition=proposition_label,
                 confidence=_as_float(item.get("confidence", proposition.confidence), "confidence", "triple", normalized.chunk.document_id, normalized.chunk.chunk_id),
                 qualification=qualification,
+                source_text=proposition.source_text,
+                source_start_char=source_start,
+                source_end_char=source_end,
             ))
         return triples
 
     def _integrate(self, document_id: str, document_text: str, triples: Sequence[Triple]) -> nx.MultiDiGraph:
         graph = nx.MultiDiGraph(document_id=document_id, document_text=document_text)
+        seen_triples: set[tuple[Any, ...]] = set()
 
         def provenance(triple: Triple) -> dict[str, Any]:
+            source_start = triple.source_start_char
+            source_end = triple.source_end_char
+            source_text = triple.source_text or triple.chunk.text
             return {
                 "document_id": document_id,
                 "chunk_id": triple.chunk.chunk_id,
-                "start_char": triple.chunk.start_char,
-                "end_char": triple.chunk.end_char,
-                "source_text": triple.chunk.text,
+                "start_char": source_start if source_start is not None else triple.chunk.start_char,
+                "end_char": source_end if source_end is not None else triple.chunk.end_char,
+                "source_text": source_text,
                 "proposition_id": triple.proposition_id,
+            }
+
+        def mention_provenance(triple: Triple, entity: EntityMention) -> dict[str, Any]:
+            source = triple.source_text or triple.chunk.text
+            span = _find_text_span(source, entity.mention)
+            source_start = triple.source_start_char
+            if span is not None and source_start is not None:
+                mention_start, mention_end = source_start + span[0], source_start + span[1]
+            else:
+                mention_start = mention_end = None
+            return {
+                **provenance(triple),
+                "mention": entity.mention,
+                "mention_start_char": mention_start,
+                "mention_end_char": mention_end,
             }
 
         for index, triple in enumerate(triples):
             subject_id = self.resolver.resolve(triple.subject)
             object_id = self.resolver.resolve(triple.object)
+            signature = (
+                subject_id,
+                triple.predicate,
+                object_id,
+                triple.source_start_char,
+                triple.source_end_char,
+                re.sub(r"\s+", " ", triple.source_text or triple.proposition).casefold(),
+            )
+            if signature in seen_triples:
+                continue
+            seen_triples.add(signature)
             for node_id, entity in ((subject_id, triple.subject), (object_id, triple.object)):
                 if node_id not in graph:
                     graph.add_node(
@@ -524,7 +597,7 @@ class SemanticPipeline:
                 node = graph.nodes[node_id]
                 if entity.mention not in node["mentions"]:
                     node["mentions"].append(entity.mention)
-                node_provenance = provenance(triple)
+                node_provenance = mention_provenance(triple, entity)
                 if node_provenance not in node["provenance"]:
                     node["provenance"].append(node_provenance)
             graph.add_edge(

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +37,13 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         chunk_overlap: int = 0,
         max_retries: int = 2,
         retry_backoff: float = 0.25,
+        document_id_fn: Callable[[str, int], str] | None = None,
         segmenter: Segmenter | None = None,
         entity_resolver: EntityResolver | None = None,
         verbose: bool = True,
     ) -> None:
+        if document_id_fn is not None and not callable(document_id_fn):
+            raise TypeError("document_id_fn must be callable")
         self.ontology = ontology
         self.prompts = prompts
         self.model = model
@@ -47,12 +51,14 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         self.chunk_overlap = chunk_overlap
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff
+        self.document_id_fn = document_id_fn
         self.segmenter = segmenter
         self.entity_resolver = entity_resolver
         self.verbose = verbose
 
     def fit(self, X: Iterable[str], y: Any = None) -> "SemanticGraphicalizer":
         del y
+        documents = self._validate_input(X)
         self.ontology_ = load_ontology(self.ontology)
         self.prompts_ = load_prompts(self.prompts)
         segmenter = self.segmenter or ParagraphWindowSegmenter(self.max_chunk_chars, self.chunk_overlap)
@@ -73,7 +79,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 f"[SemanticGraphicalizer] ready: model={type(model).__name__}, "
                 f"ontology={self.ontology_.name}, domain={self.prompts_.domain}"
             )
-        self._validate_input(X)
+        self.n_documents_in_fit_ = len(documents)
         return self
 
     @staticmethod
@@ -89,10 +95,27 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         return documents
 
     def fit_transform(self, X: Iterable[str], y: Any = None, **fit_params: Any) -> list[nx.MultiDiGraph]:
-        del fit_params
+        if fit_params:
+            raise TypeError("fit_params are not supported by SemanticGraphicalizer")
         documents = self._validate_input(X)
         self.fit(documents, y)
         return self.transform(documents)
+
+    def _document_ids(self, documents: list[str]) -> list[str]:
+        occurrences: dict[str, int] = {}
+        document_ids: list[str] = []
+        for index, document in enumerate(documents):
+            if self.document_id_fn is None:
+                digest = sha256(document.encode("utf-8")).hexdigest()[:12]
+                base_id = f"document-{digest}"
+            else:
+                base_id = self.document_id_fn(document, index)
+                if not isinstance(base_id, str) or not base_id.strip():
+                    raise ValueError("document_id_fn must return a non-empty string")
+            occurrence = occurrences.get(base_id, 0)
+            occurrences[base_id] = occurrence + 1
+            document_ids.append(base_id if occurrence == 0 else f"{base_id}-{occurrence}")
+        return document_ids
 
     def transform(self, X: Iterable[str]) -> list[nx.MultiDiGraph]:
         traces = self.transform_with_trace(X)
@@ -101,9 +124,10 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
     def transform_with_trace(self, X: Iterable[str]) -> list[DocumentTrace]:
         check_is_fitted(self, ["ontology_", "prompts_", "pipeline_"])
         documents = self._validate_input(X)
+        document_ids = self._document_ids(documents)
         return [
-            self.pipeline_.process(f"document-{index}", document)
-            for index, document in enumerate(documents)
+            self.pipeline_.process(document_id, document)
+            for document_id, document in zip(document_ids, documents)
         ]
 
     def display(

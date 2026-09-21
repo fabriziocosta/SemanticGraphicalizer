@@ -74,6 +74,11 @@ class OpenAIModelClient:
             client = OpenAI()
         if request_options is not None and not isinstance(request_options, Mapping):
             raise TypeError("request_options must be a mapping")
+        reserved_options = {"model", "input", "text", "store"}
+        if reserved_options.intersection(request_options or {}):
+            raise ValueError(
+                "request_options cannot override model, input, text, or store"
+            )
         self.model = model
         self.client = client
         self.request_options = dict(request_options or {})
