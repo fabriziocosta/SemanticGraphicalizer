@@ -35,6 +35,7 @@ from .types import (
     Summary,
     Triple,
 )
+from .visualization import D3_CDN_URL, display_graph, graph_to_d3_data, graph_to_d3_html
 
 __all__ = [
     "CallableModelClient",
@@ -43,6 +44,7 @@ __all__ = [
     "DEFAULT_OPENAI_MODEL",
     "DEFAULT_AESOP_CACHE_DIR",
     "DocumentTrace",
+    "D3_CDN_URL",
     "EntityMention",
     "AESOP_GUTENBERG_URL",
     "ModelClient",
@@ -59,6 +61,9 @@ __all__ = [
     "SemanticPipeline",
     "Summary",
     "Triple",
+    "display_graph",
+    "graph_to_d3_data",
+    "graph_to_d3_html",
     "load_ontology",
     "load_aesop_fables",
     "load_prompts",

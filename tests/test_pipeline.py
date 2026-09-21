@@ -84,6 +84,13 @@ def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
     assert edge["provenance"]["chunk_id"].endswith("chunk-0")
 
 
+def test_transformer_display_accepts_trace_graph() -> None:
+    transformer = make_transformer().fit(["A tale."])
+    trace = transformer.transform_with_trace(["A tale."])[0]
+    rendered = transformer.display(trace)
+    assert "Ontology graph" in rendered.data
+
+
 def test_input_must_be_an_iterable_of_documents() -> None:
     transformer = make_transformer()
     with pytest.raises(ValueError, match="not one string"):

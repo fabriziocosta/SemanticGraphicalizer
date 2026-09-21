@@ -44,3 +44,12 @@ stories = load_aesop_fables(limit=2)
 
 This returns a `list[str]`, one complete story per item, and caches the source
 under `data/raw/pg53103.txt`.
+
+Graphs can be rendered inline in a notebook with a D3 force layout:
+
+```python
+graphicalizer.display(graphs[0])
+```
+
+The default view uses ontology IDs as text-only nodes, proposition labels on
+thin gray edges, and no filled node circles.

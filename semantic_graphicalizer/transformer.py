@@ -20,6 +20,7 @@ from .pipeline import (
     SemanticPipeline,
 )
 from .types import DocumentTrace
+from .visualization import display_graph
 
 
 class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
@@ -78,3 +79,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             self.pipeline_.process(f"document-{index}", document)
             for index, document in enumerate(documents)
         ]
+
+    def display(self, graph_or_trace: nx.Graph | DocumentTrace, **kwargs: Any) -> Any:
+        """Return an inline D3 force-directed visualization of a graph."""
+
+        return display_graph(graph_or_trace, **kwargs)
