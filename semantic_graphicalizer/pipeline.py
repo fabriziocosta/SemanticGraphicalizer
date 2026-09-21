@@ -6,6 +6,7 @@ import json
 import re
 import time
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -281,10 +282,23 @@ class SemanticPipeline:
 
     def _generate(self, stage: str, prompt_values: dict[str, str], *, chunk: Chunk) -> Mapping[str, Any]:
         prompt = self.prompts.render(stage, **prompt_values)
+        schema = deepcopy(_SCHEMAS[stage])
+        if stage == "triple":
+            triple_schema = schema["properties"]["triples"]["items"]
+            triple_schema["properties"]["predicate"] = {
+                "type": "string",
+                "enum": sorted(self.ontology.relation_ids),
+            }
+            entity_label_schema = {
+                "type": "string",
+                "enum": sorted(self.ontology.term_ids),
+            }
+            triple_schema["properties"]["subject"]["properties"]["label"] = entity_label_schema
+            triple_schema["properties"]["object"]["properties"]["label"] = entity_label_schema
         response = self.model.generate(
             stage=stage,
             prompt=prompt,
-            schema=_SCHEMAS[stage],
+            schema=schema,
             context={"document_id": chunk.document_id, "chunk_id": chunk.chunk_id},
         )
         return _as_mapping(response, stage, chunk.document_id, chunk.chunk_id)

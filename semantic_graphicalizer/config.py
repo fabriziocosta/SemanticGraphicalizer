@@ -71,6 +71,8 @@ class OntologyConfig:
         terms = "\n".join(f"- {term.id}: {term.description}" for term in self.terms)
         relations = "\n".join(
             f"- {relation.id}: {relation.description}"
+            f" (source: {', '.join(relation.source_terms) or 'any'};"
+            f" target: {', '.join(relation.target_terms) or 'any'})"
             for relation in self.relations
         )
         return f"Ontology: {self.name} (version {self.version})\nTerms:\n{terms}\nRelations:\n{relations}"
