@@ -30,6 +30,24 @@ def _validate_charge_strength(charge_strength: float) -> float:
     return float(charge_strength)
 
 
+def _validate_positive_number(value: float, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f"{name} must be a positive number")
+    return float(value)
+
+
+def _validate_nonnegative_number(value: float, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError(f"{name} must be a non-negative number")
+    return float(value)
+
+
+def _ontology_text(value: Any) -> str:
+    """Normalize ontology labels while leaving source text untouched."""
+
+    return str(value).lower()
+
+
 def _wrap_text(value: Any, max_width: int) -> str:
     lines: list[str] = []
     for paragraph in str(value).splitlines() or [""]:
@@ -88,7 +106,7 @@ def graph_to_text(
         elif graph.degree(node_id) == 0:
             continue
 
-        node_label = str(data.get(node_label_attr, node_id))
+        node_label = _ontology_text(data.get(node_label_attr, node_id))
         mentions = data.get("mentions")
         if isinstance(mentions, (list, tuple)):
             surface_text = "; ".join(str(mention) for mention in mentions if mention)
@@ -110,9 +128,14 @@ def graph_to_text(
                 for source_id, target_id, relation_data in graph.edges(node_id, data=True)
             ]
         for target_id, relation_data in relation_items:
-            predicate = relation_data.get("predicate") or relation_data.get(edge_label_attr) or "relation"
+            predicate_value = relation_data.get("predicate")
+            predicate = (
+                _ontology_text(predicate_value)
+                if predicate_value
+                else relation_data.get(edge_label_attr) or "relation"
+            )
             target_data = graph.nodes[target_id]
-            target_label = target_data.get(node_label_attr, target_id)
+            target_label = _ontology_text(target_data.get(node_label_attr, target_id))
             target_mentions = target_data.get("mentions")
             if isinstance(target_mentions, (list, tuple)):
                 target_text = "; ".join(str(mention) for mention in target_mentions if mention)
@@ -139,7 +162,7 @@ def graph_to_d3_data(
     max_width = _validate_max_width(max_width)
 
     def combined_label(primary: Any, source: Any) -> str:
-        primary_text = _wrap_text(primary, max_width)
+        primary_text = _wrap_text(_ontology_text(primary), max_width)
         source_text = _wrap_text(source, max_width) if source else ""
         if not show_source or not source_text:
             return primary_text
@@ -170,7 +193,7 @@ def graph_to_d3_data(
         {
             "id": str(node_id),
             "label": combined_label(data.get(node_label_attr, node_id), node_source(data)),
-            "ontology_label": str(data.get(node_label_attr, node_id)),
+            "ontology_label": _ontology_text(data.get(node_label_attr, node_id)),
             "source_fragment": node_source(data),
             "sequence": sequence_by_node[node_id],
             "component_order": component_info[node_id][0],
@@ -186,7 +209,7 @@ def graph_to_d3_data(
                 "source": str(source),
                 "target": str(target),
                 "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
-                "predicate": str(data.get("predicate", "")),
+                "predicate": _ontology_text(data.get("predicate", "")),
                 "source_fragment": str(data.get(edge_label_attr, "")),
                 "directed": graph.is_directed(),
             }
@@ -198,7 +221,7 @@ def graph_to_d3_data(
                 "source": str(source),
                 "target": str(target),
                 "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
-                "predicate": str(data.get("predicate", "")),
+                "predicate": _ontology_text(data.get("predicate", "")),
                 "source_fragment": str(data.get(edge_label_attr, "")),
                 "directed": graph.is_directed(),
             }
@@ -217,6 +240,9 @@ def graph_to_d3_html(
     show_source: bool = True,
     max_width: int = 80,
     charge_strength: float = -180,
+    link_distance: float = 90,
+    component_spacing: float = 180,
+    component_strength: float = 0.25,
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return a self-contained inline HTML fragment containing a D3 graph."""
@@ -226,6 +252,9 @@ def graph_to_d3_html(
     if not isinstance(d3_url, str) or not d3_url.strip():
         raise ValueError("d3_url must be a non-empty string")
     charge_strength = _validate_charge_strength(charge_strength)
+    link_distance = _validate_positive_number(link_distance, "link_distance")
+    component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
+    component_strength = _validate_nonnegative_number(component_strength, "component_strength")
 
     root_id = f"semantic-graphicalizer-{uuid4().hex}"
     payload = json.dumps(
@@ -245,6 +274,9 @@ def graph_to_d3_html(
         width_json=width_json,
         height_json=height_json,
         charge_strength=charge_strength,
+        link_distance=link_distance,
+        component_spacing=component_spacing,
+        component_strength=component_strength,
         root_setup=f"  const root = document.getElementById({json.dumps(root_id)});",
     )
     return f'''<div id="{root_id}" role="img" aria-label="Ontology graph"></div>
@@ -260,6 +292,9 @@ def _d3_script(
     width_json: str,
     height_json: str,
     charge_strength: float,
+    link_distance: float,
+    component_spacing: float,
+    component_strength: float,
     root_setup: str,
 ) -> str:
     """Return the shared D3 program for HTML and notebook mounts."""
@@ -269,6 +304,9 @@ def _d3_script(
   const data = {payload};
   const width = {width_json};
   const height = {height_json};
+  const linkDistance = {link_distance};
+  const requestedComponentSpacing = {component_spacing};
+  const componentStrength = {component_strength};
   const svg = d3.select(root)
     .append("svg")
     .attr("viewBox", `0 0 ${{width}} ${{height}}`)
@@ -310,6 +348,8 @@ def _d3_script(
           .attr("dy", index === 0
             ? `${{-(lines.length - 1) * lineHeight / 2}}em`
             : `${{lineHeight}}em`)
+          .attr("font-family", index === 0 ? "monospace" : "sans-serif")
+          .attr("font-weight", index === 0 ? 600 : 400)
           .text(line);
       }});
     }});
@@ -338,10 +378,16 @@ def _d3_script(
   const labelWidth = d => Math.max(...String(d.label).split("\\n").map(line => line.length), 1);
   const nodeRadius = d => Math.max(42, Math.min(180, labelWidth(d) * 3.8));
   const componentValues = [...new Set(data.nodes.map(d => d.component_order))].sort((a, b) => a - b);
+  const compactSpacing = componentValues.length > 1
+    ? Math.min(requestedComponentSpacing, Math.max(0, (width - 180) / (componentValues.length - 1)))
+    : 0;
   const componentScale = d3.scalePoint()
     .domain(componentValues)
-    .range([90, width - 90])
-    .padding(0.5);
+    .range([
+      width / 2 - compactSpacing * (componentValues.length - 1) / 2,
+      width / 2 + compactSpacing * (componentValues.length - 1) / 2,
+    ])
+    .padding(0);
   const componentTarget = d => {{
     const center = componentScale(d.component_order) ?? width / 2;
     const slots = Math.max(1, d.component_size - 1);
@@ -387,10 +433,10 @@ def _d3_script(
     }});
 
   const simulation = d3.forceSimulation(data.nodes)
-    .force("link", d3.forceLink(data.links).id(d => d.id).distance(150).strength(0.65))
+    .force("link", d3.forceLink(data.links).id(d => d.id).distance(linkDistance).strength(0.65))
     .force("charge", d3.forceManyBody().strength({charge_strength}))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("component-order", d3.forceX(componentTarget).strength(0.8))
+    .force("component-order", d3.forceX(componentTarget).strength(componentStrength))
     .force("collision", d3.forceCollide().radius(nodeRadius).strength(1).iterations(4))
     .on("tick", () => {{
       link
@@ -425,12 +471,18 @@ def graph_to_d3_javascript(
     show_source: bool = True,
     max_width: int = 80,
     charge_strength: float = -180,
+    link_distance: float = 90,
+    component_spacing: float = 180,
+    component_strength: float = 0.25,
 ) -> str:
     """Return JavaScript that renders the graph into an IPython output area."""
 
     if width < 1 or height < 1:
         raise ValueError("width and height must be positive")
     charge_strength = _validate_charge_strength(charge_strength)
+    link_distance = _validate_positive_number(link_distance, "link_distance")
+    component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
+    component_strength = _validate_nonnegative_number(component_strength, "component_strength")
     root_id = f"semantic-graphicalizer-{uuid4().hex}"
     payload = json.dumps(
         graph_to_d3_data(
@@ -447,6 +499,9 @@ def graph_to_d3_javascript(
         width_json=json.dumps(int(width)),
         height_json=json.dumps(int(height)),
         charge_strength=charge_strength,
+        link_distance=link_distance,
+        component_spacing=component_spacing,
+        component_strength=component_strength,
         root_setup=f"""  const root = document.createElement("div");
   root.id = {json.dumps(root_id)};
   root.setAttribute("role", "img");
@@ -468,6 +523,9 @@ def graph_to_d3_iframe(
     show_source: bool = True,
     max_width: int = 80,
     charge_strength: float = -180,
+    link_distance: float = 90,
+    component_spacing: float = 180,
+    component_strength: float = 0.25,
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return an HTML iframe that runs the D3 graph in notebook frontends."""
@@ -476,6 +534,10 @@ def graph_to_d3_iframe(
         raise ValueError("width and height must be positive")
     if not isinstance(d3_url, str) or not d3_url.strip():
         raise ValueError("d3_url must be a non-empty string")
+    charge_strength = _validate_charge_strength(charge_strength)
+    link_distance = _validate_positive_number(link_distance, "link_distance")
+    component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
+    component_strength = _validate_nonnegative_number(component_strength, "component_strength")
 
     document = _graph_to_d3_document(
         value,
@@ -486,6 +548,9 @@ def graph_to_d3_iframe(
         show_source=show_source,
         max_width=max_width,
         charge_strength=charge_strength,
+        link_distance=link_distance,
+        component_spacing=component_spacing,
+        component_strength=component_strength,
         d3_url=d3_url,
     )
     return (
@@ -505,6 +570,9 @@ def _graph_to_d3_document(
     show_source: bool,
     max_width: int,
     charge_strength: float,
+    link_distance: float,
+    component_spacing: float,
+    component_strength: float,
     d3_url: str,
 ) -> str:
     """Build the document used by notebook iframe renderers."""
@@ -521,6 +589,9 @@ def _graph_to_d3_document(
     show_source=show_source,
     max_width=max_width,
     charge_strength=charge_strength,
+    link_distance=link_distance,
+    component_spacing=component_spacing,
+    component_strength=component_strength,
     d3_url=d3_url,
 )}</body>
 </html>'''
@@ -593,14 +664,16 @@ def graph_to_static_svg(
         lines = label.split("\n") or [""]
         line_height = font_size * 1.2
         first_dy = -((len(lines) - 1) * line_height) / 2
-        tspans = "".join(
-            f'<tspan x="{x:.2f}" dy="{(first_dy if index == 0 else line_height):.2f}">'
-            f"{xml_text(line)}</tspan>"
-            for index, line in enumerate(lines)
-        )
+        tspans: list[str] = []
+        for index, line in enumerate(lines):
+            ontology_attributes = ' font-family="monospace" font-weight="600"' if index == 0 else ""
+            tspans.append(
+                f'<tspan x="{x:.2f}" dy="{(first_dy if index == 0 else line_height):.2f}"'
+                f"{ontology_attributes}>{xml_text(line)}</tspan>"
+            )
         return (
             f'<text x="{x:.2f}" y="{y:.2f}" {attributes}>'
-            f"{tspans}</text>"
+            f"{''.join(tspans)}</text>"
         )
 
     elements: list[str] = []
@@ -692,6 +765,9 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         show_source=kwargs.get("show_source", True),
         max_width=kwargs.get("max_width", 80),
         charge_strength=kwargs.get("charge_strength", -180),
+        link_distance=kwargs.get("link_distance", 90),
+        component_spacing=kwargs.get("component_spacing", 180),
+        component_strength=kwargs.get("component_strength", 0.25),
         d3_url=kwargs.get("d3_url", D3_CDN_URL),
     )
     data_url = "data:text/html;charset=utf-8," + quote(document, safe="")

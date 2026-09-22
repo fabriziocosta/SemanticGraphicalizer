@@ -66,9 +66,25 @@ graphicalizer.display(graphs[0], mode="static")
 graphicalizer.display(graphs[0], mode="text")
 ```
 
+For a compact dynamic layout, reduce the link distance and component spacing;
+set `charge_strength=0` to disable charge repulsion entirely:
+
+```python
+graphicalizer.display(
+    graphs[0],
+    mode="dynamic",
+    charge_strength=0,
+    link_distance=80,
+    component_spacing=120,
+    component_strength=0.15,
+)
+```
+
 Text mode prints each node with outgoing relations as `Ontology: surface text`,
 followed by indented `relation: TargetOntology: target text` lines. Target-only
-nodes are shown inline and are not repeated as separate headings.
+nodes are shown inline and are not repeated as separate headings. Dynamic and
+static renderers show ontology terms and predicates in lowercase monospace;
+source mentions and proposition fragments retain their original typography.
 
 The default view shows both values: ontology IDs plus surface mentions on
 text-only nodes, and ontology relation IDs plus proposition fragments on thin

@@ -32,8 +32,8 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
         "nodes": [
             {
                 "id": "fox",
-                "label": "Animal\nfox",
-                "ontology_label": "Animal",
+                "label": "animal\nfox",
+                "ontology_label": "animal",
                 "source_fragment": "fox",
                 "sequence": 0,
                 "component_order": 0,
@@ -42,8 +42,8 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
             },
             {
                 "id": "crow",
-            "label": "Animal\ncrow",
-                "ontology_label": "Animal",
+            "label": "animal\ncrow",
+                "ontology_label": "animal",
                 "source_fragment": "crow",
                 "sequence": 1,
                 "component_order": 0,
@@ -79,6 +79,7 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "nodeRadius" in html
     assert "setMultilineText" in html
     assert ".append(\"tspan\")" in html
+    assert '.attr("font-family", index === 0 ? "monospace" : "sans-serif")' in html
     assert "d3.zoom()" in html
     assert "scaleExtent([0.25, 4])" in html
     assert 'event => viewport.attr("transform", event.transform)' in html
@@ -94,12 +95,24 @@ def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
     graph.add_node("fox", label="Animal")
 
     html = graph_to_d3_html(graph)
-    tuned = graph_to_d3_html(graph, charge_strength=-80)
+    tuned = graph_to_d3_html(
+        graph,
+        charge_strength=-1,
+        link_distance=70,
+        component_spacing=120,
+        component_strength=0.1,
+    )
 
     assert 'force("charge", d3.forceManyBody().strength(-180.0))' in html
-    assert 'force("charge", d3.forceManyBody().strength(-80.0))' in tuned
+    assert 'force("link", d3.forceLink(data.links).id(d => d.id).distance(linkDistance)' in tuned
+    assert "const linkDistance = 70.0;" in tuned
+    assert "const requestedComponentSpacing = 120.0;" in tuned
+    assert "const componentStrength = 0.1;" in tuned
+    assert 'force("charge", d3.forceManyBody().strength(-1.0))' in tuned
     with pytest.raises(ValueError, match="charge_strength"):
         graph_to_d3_html(graph, charge_strength=10)
+    with pytest.raises(ValueError, match="link_distance"):
+        graph_to_d3_html(graph, link_distance=0)
 
 
 def test_labels_use_new_lines_and_wrap_at_max_width() -> None:
@@ -114,7 +127,7 @@ def test_labels_use_new_lines_and_wrap_at_max_width() -> None:
 
     data = graph_to_d3_data(graph, max_width=16)
 
-    assert data["nodes"][0]["label"] == "Animal\nfox"
+    assert data["nodes"][0]["label"] == "animal\nfox"
     assert data["links"][0]["label"] == (
         "interacts_with\nThe fox\ninteracts with\nthe crow."
     )
@@ -228,8 +241,8 @@ def test_static_display_uses_kamada_kawai_and_text_only_svg() -> None:
     assert "Kamada-Kawai" in svg
     assert 'stroke="#9aa0a6"' in svg
     assert '<text' in svg
-    assert "Animal" in svg
-    assert "Animal" in svg
+    assert "animal" in svg
+    assert 'font-family="monospace"' in svg
     assert ">fox</tspan>" in svg
     assert "performs" in svg
     assert "The fox performs an action." in svg
@@ -253,8 +266,8 @@ def test_text_mode_lists_nodes_mentions_and_relations() -> None:
     rendered = graph_to_text(graph)
 
     assert rendered == (
-        "Animal: the fox\n"
-        "    performs: Action: an action"
+        "animal: the fox\n"
+        "    performs: action: an action"
     )
 
 
