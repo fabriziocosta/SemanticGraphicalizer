@@ -66,9 +66,9 @@ graphicalizer.display(graphs[0], mode="static")
 graphicalizer.display(graphs[0], mode="text")
 ```
 
-Text mode prints each node as `Ontology: surface text`, followed by indented
-`relation: TargetOntology: target text` lines. Incoming relations are marked
-with `←`.
+Text mode prints each node with outgoing relations as `Ontology: surface text`,
+followed by indented `relation: TargetOntology: target text` lines. Target-only
+nodes are shown inline and are not repeated as separate headings.
 
 The default view shows both values: ontology IDs plus surface mentions on
 text-only nodes, and ontology relation IDs plus proposition fragments on thin

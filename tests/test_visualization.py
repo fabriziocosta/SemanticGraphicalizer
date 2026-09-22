@@ -254,9 +254,7 @@ def test_text_mode_lists_nodes_mentions_and_relations() -> None:
 
     assert rendered == (
         "Animal: the fox\n"
-        "    performs: Action: an action\n"
-        "Action: an action\n"
-        "    ← performs: Animal: the fox"
+        "    performs: Action: an action"
     )
 
 
@@ -266,4 +264,4 @@ def test_display_graph_supports_text_mode() -> None:
 
     rendered = display_graph(graph, mode="text")
 
-    assert rendered.data == "Animal: fox"
+    assert rendered.data == ""

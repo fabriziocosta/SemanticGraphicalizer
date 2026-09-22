@@ -62,8 +62,10 @@ def graph_to_text(
 ) -> str:
     """Return a readable, indented text view of the graph.
 
-    Each node is followed by its surface mentions and outgoing relations. The
-    relation line keeps the predicate and target ontology ID together.
+    Each node with outgoing relations is followed by those relations. Incoming
+    relations are not repeated, and target nodes are shown inline on the
+    relation line. The relation line keeps the predicate and target ontology
+    ID together.
     """
 
     graph = _graph_from_value(value)
@@ -80,6 +82,12 @@ def graph_to_text(
 
     lines: list[str] = []
     for _, (node_id, data) in ordered_nodes:
+        if graph.is_directed():
+            if graph.out_degree(node_id) == 0:
+                continue
+        elif graph.degree(node_id) == 0:
+            continue
+
         node_label = str(data.get(node_label_attr, node_id))
         mentions = data.get("mentions")
         if isinstance(mentions, (list, tuple)):
@@ -90,24 +98,18 @@ def graph_to_text(
 
         if graph.is_directed():
             relation_items = [
-                (target_id, relation_data, "outgoing")
+                (target_id, relation_data)
                 for _, target_id, relation_data in graph.out_edges(node_id, data=True)
             ]
-            relation_items.extend(
-                (source_id, relation_data, "incoming")
-                for source_id, _, relation_data in graph.in_edges(node_id, data=True)
-                if source_id != node_id
-            )
         else:
             relation_items = [
                 (
                     target_id if source_id == node_id else source_id,
                     relation_data,
-                    "outgoing",
                 )
                 for source_id, target_id, relation_data in graph.edges(node_id, data=True)
             ]
-        for target_id, relation_data, direction in relation_items:
+        for target_id, relation_data in relation_items:
             predicate = relation_data.get("predicate") or relation_data.get(edge_label_attr) or "relation"
             target_data = graph.nodes[target_id]
             target_label = target_data.get(node_label_attr, target_id)
@@ -116,11 +118,10 @@ def graph_to_text(
                 target_text = "; ".join(str(mention) for mention in target_mentions if mention)
             else:
                 target_text = str(target_mentions) if target_mentions else ""
-            direction_prefix = "← " if direction == "incoming" else ""
             relation_text = f"{predicate}: {target_label}"
             if target_text:
                 relation_text += f": {target_text}"
-            lines.append(f"    {direction_prefix}{relation_text}")
+            lines.append(f"    {relation_text}")
     return "\n".join(lines)
 
 
