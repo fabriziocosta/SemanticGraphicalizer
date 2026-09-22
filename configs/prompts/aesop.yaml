@@ -86,3 +86,5 @@ stages:
       contain source_proposition_id, target_proposition_id, predicate,
       confidence, and qualification. Each state interval must contain
       state_proposition_id and optional starts_at and ends_at proposition IDs.
+      Boundary IDs must refer to event propositions; return null when no event
+      boundary can be identified.

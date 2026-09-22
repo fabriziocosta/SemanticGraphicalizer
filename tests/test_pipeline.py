@@ -322,6 +322,38 @@ def test_state_interval_with_unknown_boundaries_is_retained_without_edges() -> N
     assert not any(data.get("edge_type") == "state_interval" for _, _, data in trace.graph.edges(data=True))
 
 
+def test_state_interval_boundary_with_wrong_kind_is_left_unresolved() -> None:
+    class WrongBoundaryModel(FakeModel):
+        def generate(self, *, stage, prompt, schema, context):
+            if stage == "decompose":
+                return {"propositions": [
+                    {"id": "s1", "text": "The fox is alert.", "source_text": "The fox is alert.", "kind": "state", "confidence": None, "qualification": {}},
+                ]}
+            if stage == "triple":
+                return {"triples": []}
+            if stage == "link":
+                document_id = context["document_id"]
+                return {
+                    "links": [],
+                    "state_intervals": [{
+                        "state_proposition_id": f"{document_id}:chunk-0:s1",
+                        "starts_at": f"{document_id}:chunk-0:s1",
+                        "ends_at": None,
+                    }],
+                }
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    trace = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+        WrongBoundaryModel(),
+        verbose=False,
+    ).fit(["The fox is alert."]).transform_with_trace(["The fox is alert."])[0]
+
+    assert trace.state_intervals[0].starts_at is None
+    assert trace.state_intervals[0].ends_at is None
+
+
 def test_document_ids_are_stable_across_transform_batches() -> None:
     transformer = make_transformer().fit(["A tale."])
     first = transformer.transform(["A tale."])[0]

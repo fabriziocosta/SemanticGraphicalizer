@@ -703,13 +703,20 @@ class SemanticPipeline:
                 if proposition_id is not None:
                     proposition_id = _as_text(proposition_id, field, "link", document_id, link_chunk.chunk_id)
                     target = known.get(proposition_id)
-                    if target is None or target.kind != "event":
+                    if target is None:
                         raise StageOutputError(
                             "link",
-                            f"{field} must refer to an event proposition",
+                            f"{field} must refer to a known proposition",
                             document_id=document_id,
                             chunk_id=link_chunk.chunk_id,
                         )
+                    # A model can identify a real proposition but assign it the
+                    # wrong kind for an interval boundary. Preserve the interval
+                    # and leave that boundary unresolved rather than discarding
+                    # the entire document. Only event propositions can be
+                    # materialized as starts_at/ends_at edges.
+                    if target.kind != "event":
+                        proposition_id = None
                     if field == "starts_at":
                         starts_at = proposition_id
                     else:
