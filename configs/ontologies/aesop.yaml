@@ -48,3 +48,13 @@ relations:
     description: A tale or narrative element conveys a moral.
     source_terms: [Character, Action, Moral]
     target_terms: [Moral]
+link_relations:
+  - id: before
+    category: temporal
+    description: The source proposition occurs before the target proposition.
+  - id: after
+    category: temporal
+    description: The source proposition occurs after the target proposition.
+  - id: causes
+    category: causal
+    description: The source proposition explicitly causes the target proposition.

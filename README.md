@@ -27,9 +27,13 @@ Nodes store the ontology term in `node["label"]`. Nodes and edges also carry
 `document_id` and the original `document_text`; chunk-level excerpts remain in
 their provenance fields. Edges store the complete proposition in
 `edge["label"]`, while `edge["predicate"]` contains the ontology relation ID.
-Nodes carry a first-seen `sequence`; visual layouts order disconnected
-components from left to right by the earliest node sequence in the document.
-`transform_with_trace` exposes all intermediate stages and provenance.
+The unified graph also reifies propositions as `node_type="proposition"` nodes
+with `proposition_kind` (`event`, `state`, or `statement`) and document-order
+`sequence` values. Entity participation, narrative temporal links, and
+explicit causal links are represented as typed edges. The legacy entity-only
+projection is available as `DocumentTrace.semantic_graph`.
+`transform_with_trace` exposes all intermediate stages, links, state intervals,
+and provenance.
 Document IDs are stable content-derived IDs by default; pass
 `document_id_fn=(text, index) -> str` when an external identifier is available.
 Node and edge provenance includes source spans when the model's source text can
@@ -57,8 +61,8 @@ results under `data/raw/aesop_fables.json`. The Gutenberg source is also kept
 under `data/raw/pg53103.txt`; after the first call, subsequent calls do not
 download anything.
 
-Graphs can be rendered inline in a notebook with either the interactive D3 force
-layout or a deterministic static NetworkX Kamada-Kawai layout:
+Graphs can be rendered inline in a notebook with either the interactive D3
+layout or a deterministic static SVG layout:
 
 ```python
 graphicalizer.display(graphs[0], mode="dynamic")
@@ -79,6 +83,10 @@ graphicalizer.display(
     component_strength=0.15,
 )
 ```
+
+Dynamic and static rendering automatically use a timeline layout for unified
+graphs. Use `layout="force"` to request the legacy force/Kamada-Kawai layout,
+or `layout="timeline"` to force the narrative layout.
 
 Text mode prints each node with outgoing relations as `Ontology: surface text`,
 followed by indented `relation: TargetOntology: target text` lines. Target-only

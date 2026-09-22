@@ -42,6 +42,12 @@ def _validate_nonnegative_number(value: float, name: str) -> float:
     return float(value)
 
 
+def _validate_layout(layout: str) -> str:
+    if layout not in {"auto", "force", "timeline"}:
+        raise ValueError("layout must be one of 'auto', 'force', or 'timeline'")
+    return layout
+
+
 def _ontology_text(value: Any) -> str:
     """Normalize ontology labels while leaving source text untouched."""
 
@@ -142,6 +148,9 @@ def graph_to_text(
             else:
                 target_text = str(target_mentions) if target_mentions else ""
             relation_text = f"{predicate}: {target_label}"
+            category = relation_data.get("category")
+            if category in {"temporal", "causal"}:
+                relation_text = f"[{category}] {relation_text}"
             if target_text:
                 relation_text += f": {target_text}"
             lines.append(f"    {relation_text}")
@@ -195,6 +204,8 @@ def graph_to_d3_data(
             "label": combined_label(data.get(node_label_attr, node_id), node_source(data)),
             "ontology_label": _ontology_text(data.get(node_label_attr, node_id)),
             "source_fragment": node_source(data),
+            "node_type": str(data.get("node_type", "entity")),
+            "proposition_kind": data.get("proposition_kind"),
             "sequence": sequence_by_node[node_id],
             "component_order": component_info[node_id][0],
             "component_index": component_info[node_id][1],
@@ -211,6 +222,8 @@ def graph_to_d3_data(
                 "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
                 "predicate": _ontology_text(data.get("predicate", "")),
                 "source_fragment": str(data.get(edge_label_attr, "")),
+                "edge_type": str(data.get("edge_type", "semantic")),
+                "category": str(data.get("category", "semantic")),
                 "directed": graph.is_directed(),
             }
             for source, target, _key, data in edges
@@ -223,6 +236,8 @@ def graph_to_d3_data(
                 "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
                 "predicate": _ontology_text(data.get("predicate", "")),
                 "source_fragment": str(data.get(edge_label_attr, "")),
+                "edge_type": str(data.get("edge_type", "semantic")),
+                "category": str(data.get("category", "semantic")),
                 "directed": graph.is_directed(),
             }
             for source, target, data in graph.edges(data=True)
@@ -243,6 +258,7 @@ def graph_to_d3_html(
     link_distance: float = 90,
     component_spacing: float = 180,
     component_strength: float = 0.25,
+    layout: str = "auto",
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return a self-contained inline HTML fragment containing a D3 graph."""
@@ -255,6 +271,7 @@ def graph_to_d3_html(
     link_distance = _validate_positive_number(link_distance, "link_distance")
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
+    layout = _validate_layout(layout)
 
     root_id = f"semantic-graphicalizer-{uuid4().hex}"
     payload = json.dumps(
@@ -277,6 +294,7 @@ def graph_to_d3_html(
         link_distance=link_distance,
         component_spacing=component_spacing,
         component_strength=component_strength,
+        layout=layout,
         root_setup=f"  const root = document.getElementById({json.dumps(root_id)});",
     )
     return f'''<div id="{root_id}" role="img" aria-label="Ontology graph"></div>
@@ -295,6 +313,7 @@ def _d3_script(
     link_distance: float,
     component_spacing: float,
     component_strength: float,
+    layout: str,
     root_setup: str,
 ) -> str:
     """Return the shared D3 program for HTML and notebook mounts."""
@@ -307,6 +326,7 @@ def _d3_script(
   const linkDistance = {link_distance};
   const requestedComponentSpacing = {component_spacing};
   const componentStrength = {component_strength};
+  const layoutMode = {json.dumps(layout)};
   const svg = d3.select(root)
     .append("svg")
     .attr("viewBox", `0 0 ${{width}} ${{height}}`)
@@ -316,9 +336,11 @@ def _d3_script(
     .attr("aria-label", "Ontology graph with ontology-relation-labelled edges");
 
   const arrowId = `${{root.id}}-arrow`;
-  svg.append("defs")
+  const temporalArrowId = `${{root.id}}-temporal-arrow`;
+  const causalArrowId = `${{root.id}}-causal-arrow`;
+  const marker = (id, fill) => svg.append("defs")
     .append("marker")
-    .attr("id", arrowId)
+    .attr("id", id)
     .attr("viewBox", "0 -5 10 10")
     .attr("refX", 9)
     .attr("refY", 0)
@@ -327,15 +349,45 @@ def _d3_script(
     .attr("orient", "auto")
     .append("path")
     .attr("d", "M0,-5L10,0L0,5")
-    .attr("fill", "#9aa0a6");
+    .attr("fill", fill);
+  marker(arrowId, "#9aa0a6");
+  marker(temporalArrowId, "#2563eb");
+  marker(causalArrowId, "#c2410c");
 
   svg.append("title").text("Ontology graph");
-  svg.append("desc").text("A force-directed graph. Scroll to zoom, drag the background to pan, drag nodes to move and pin them, and double-click a node to unpin it.");
+  svg.append("desc").text("A semantic narrative graph with temporal and causal relations. Scroll to zoom, drag the background to pan, drag nodes to move and pin them, and double-click a node to unpin it.");
 
   const viewport = svg.append("g").attr("class", "viewport");
   svg.call(d3.zoom()
     .scaleExtent([0.25, 4])
     .on("zoom", event => viewport.attr("transform", event.transform)));
+
+  const legend = svg.append("g")
+    .attr("class", "legend")
+    .attr("transform", "translate(24, 24)");
+  const legendItems = [
+    ["semantic", "#9aa0a6", ""],
+    ["temporal", "#2563eb", "6 4"],
+    ["causal", "#c2410c", ""],
+  ];
+  legendItems.forEach((item, index) => {{
+    const [label, color, dash] = item;
+    const x = index * 120;
+    legend.append("line")
+      .attr("x1", x)
+      .attr("x2", x + 24)
+      .attr("y1", 0)
+      .attr("y2", 0)
+      .attr("stroke", color)
+      .attr("stroke-width", label === "causal" ? 2.5 : 1.5)
+      .attr("stroke-dasharray", dash || null);
+    legend.append("text")
+      .attr("x", x + 30)
+      .attr("y", 4)
+      .attr("font-family", "monospace")
+      .attr("font-size", 11)
+      .text(label);
+  }});
 
   const setMultilineText = selection => {{
     selection.each(function(d) {{
@@ -360,16 +412,19 @@ def _d3_script(
     .selectAll("line")
     .data(data.links)
     .join("line")
-    .attr("stroke", "#9aa0a6")
-    .attr("stroke-width", 1)
+    .attr("stroke", d => d.category === "causal" ? "#c2410c" : d.category === "temporal" ? "#2563eb" : "#9aa0a6")
+    .attr("stroke-width", d => d.category === "causal" ? 2.5 : d.category === "temporal" ? 1.5 : 1)
     .attr("stroke-opacity", 0.85)
-    .attr("marker-end", d => d.directed ? `url(#${{arrowId}})` : null);
+    .attr("stroke-dasharray", d => d.category === "temporal" ? "6 4" : null)
+    .attr("marker-end", d => d.directed
+      ? `url(#${{d.category === "causal" ? causalArrowId : d.category === "temporal" ? temporalArrowId : arrowId}})`
+      : null);
 
   const edgeLabel = viewport.append("g")
     .selectAll("text")
     .data(data.links)
     .join("text")
-    .attr("fill", "#6b7280")
+    .attr("fill", d => d.category === "causal" ? "#c2410c" : d.category === "temporal" ? "#2563eb" : "#6b7280")
     .attr("font-size", 11)
     .attr("text-anchor", "middle")
     .attr("dy", -4)
@@ -395,6 +450,29 @@ def _d3_script(
       * Math.min(140, width / Math.max(2 * componentValues.length, 1));
     return center + local;
   }};
+  const propositionNodes = data.nodes.filter(d => d.node_type === "proposition");
+  const sequenceValues = [...new Set(propositionNodes.map(d => d.sequence))].sort((a, b) => a - b);
+  const hasPropositions = propositionNodes.length > 0;
+  const useTimeline = layoutMode === "timeline" || (layoutMode === "auto" && hasPropositions);
+  const timelineY = height * 0.52;
+  const timelineScale = d3.scalePoint()
+    .domain(sequenceValues)
+    .range([80, Math.max(80, width - 80)])
+    .padding(0.35);
+  const timelineX = d => timelineScale(d.sequence) ?? width / 2;
+  const timelineYTarget = d => {{
+    if (d.node_type !== "proposition") return height / 2;
+    if (d.proposition_kind === "state") return timelineY - 150;
+    if (d.proposition_kind === "statement") return timelineY + 150;
+    return timelineY;
+  }};
+  const xTarget = d => useTimeline ? timelineX(d) : componentTarget(d);
+  const xStrength = d => useTimeline
+    ? (d.node_type === "proposition" ? 0.95 : 0.08)
+    : componentStrength;
+  const yStrength = d => useTimeline
+    ? (d.node_type === "proposition" ? 0.95 : 0.08)
+    : 0;
 
   const drag = d3.drag()
     .on("start", (event, d) => {{
@@ -433,10 +511,11 @@ def _d3_script(
     }});
 
   const simulation = d3.forceSimulation(data.nodes)
-    .force("link", d3.forceLink(data.links).id(d => d.id).distance(linkDistance).strength(0.65))
+    .force("link", d3.forceLink(data.links).id(d => d.id).distance(d => d.category === "temporal" ? Math.min(linkDistance, 90) : d.category === "causal" ? linkDistance * 1.15 : linkDistance).strength(0.65))
     .force("charge", d3.forceManyBody().strength({charge_strength}))
     .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("component-order", d3.forceX(componentTarget).strength(componentStrength))
+    .force("x", d3.forceX(xTarget).strength(xStrength))
+    .force("y", useTimeline ? d3.forceY(timelineYTarget).strength(yStrength) : null)
     .force("collision", d3.forceCollide().radius(nodeRadius).strength(1).iterations(4))
     .on("tick", () => {{
       link
@@ -474,6 +553,7 @@ def graph_to_d3_javascript(
     link_distance: float = 90,
     component_spacing: float = 180,
     component_strength: float = 0.25,
+    layout: str = "auto",
 ) -> str:
     """Return JavaScript that renders the graph into an IPython output area."""
 
@@ -483,6 +563,7 @@ def graph_to_d3_javascript(
     link_distance = _validate_positive_number(link_distance, "link_distance")
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
+    layout = _validate_layout(layout)
     root_id = f"semantic-graphicalizer-{uuid4().hex}"
     payload = json.dumps(
         graph_to_d3_data(
@@ -502,6 +583,7 @@ def graph_to_d3_javascript(
         link_distance=link_distance,
         component_spacing=component_spacing,
         component_strength=component_strength,
+        layout=layout,
         root_setup=f"""  const root = document.createElement("div");
   root.id = {json.dumps(root_id)};
   root.setAttribute("role", "img");
@@ -526,6 +608,7 @@ def graph_to_d3_iframe(
     link_distance: float = 90,
     component_spacing: float = 180,
     component_strength: float = 0.25,
+    layout: str = "auto",
     d3_url: str = D3_CDN_URL,
 ) -> str:
     """Return an HTML iframe that runs the D3 graph in notebook frontends."""
@@ -538,6 +621,7 @@ def graph_to_d3_iframe(
     link_distance = _validate_positive_number(link_distance, "link_distance")
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
+    layout = _validate_layout(layout)
 
     document = _graph_to_d3_document(
         value,
@@ -551,6 +635,7 @@ def graph_to_d3_iframe(
         link_distance=link_distance,
         component_spacing=component_spacing,
         component_strength=component_strength,
+        layout=layout,
         d3_url=d3_url,
     )
     return (
@@ -573,6 +658,7 @@ def _graph_to_d3_document(
     link_distance: float,
     component_spacing: float,
     component_strength: float,
+    layout: str,
     d3_url: str,
 ) -> str:
     """Build the document used by notebook iframe renderers."""
@@ -592,6 +678,7 @@ def _graph_to_d3_document(
     link_distance=link_distance,
     component_spacing=component_spacing,
     component_strength=component_strength,
+    layout=layout,
     d3_url=d3_url,
 )}</body>
 </html>'''
@@ -606,11 +693,13 @@ def graph_to_static_svg(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
+    layout: str = "auto",
 ) -> str:
-    """Return an SVG using NetworkX's deterministic Kamada-Kawai layout."""
+    """Return a deterministic SVG using timeline or Kamada-Kawai layout."""
 
     if width < 1 or height < 1:
         raise ValueError("width and height must be positive")
+    layout = _validate_layout(layout)
 
     graph = _graph_from_value(value)
     display_data = graph_to_d3_data(
@@ -624,6 +713,10 @@ def graph_to_static_svg(
     positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
     display_nodes = {item["id"]: item for item in display_data["nodes"]}
     display_links = display_data["links"]
+    use_timeline = layout == "timeline" or (
+        layout == "auto"
+        and any(item["node_type"] == "proposition" for item in display_data["nodes"])
+    )
     component_count = max(
         (int(item["component_order"]) for item in display_data["nodes"]),
         default=-1,
@@ -631,10 +724,27 @@ def graph_to_static_svg(
     margin = 48
     usable_width = max(width - 2 * margin, 1)
     usable_height = max(height - 2 * margin, 1)
+    proposition_sequences = sorted(
+        item["sequence"]
+        for item in display_data["nodes"]
+        if item["node_type"] == "proposition"
+    )
 
     def point(node_id: Any) -> tuple[float, float]:
-        x, y = positions[node_id]
         node_data = display_nodes[str(node_id)]
+        if use_timeline and node_data["node_type"] == "proposition":
+            sequence_index = proposition_sequences.index(node_data["sequence"])
+            x = margin + (
+                sequence_index / max(len(proposition_sequences) - 1, 1)
+            ) * usable_width
+            timeline_y = margin + usable_height * 0.52
+            kind_offset = {
+                "event": 0,
+                "state": -120,
+                "statement": 120,
+            }.get(node_data.get("proposition_kind"), 0)
+            return x, timeline_y + kind_offset
+        x, y = positions[node_id]
         band_width = usable_width / max(component_count, 1)
         slots = max(1, int(node_data["component_size"]) - 1)
         local_x = (
@@ -679,18 +789,31 @@ def graph_to_static_svg(
     elements: list[str] = []
     if graph.is_directed():
         elements.append(
-            '<defs><marker id="semantic-graphicalizer-arrow" markerWidth="8" '
-            'markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">'
-            '<path d="M0,0 L8,4 L0,8 z" fill="#9aa0a6" /></marker></defs>'
+            '<defs>'
+            '<marker id="semantic-graphicalizer-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">'
+            '<path d="M0,0 L8,4 L0,8 z" fill="#9aa0a6" /></marker>'
+            '<marker id="semantic-graphicalizer-temporal-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">'
+            '<path d="M0,0 L8,4 L0,8 z" fill="#2563eb" /></marker>'
+            '<marker id="semantic-graphicalizer-causal-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">'
+            '<path d="M0,0 L8,4 L0,8 z" fill="#c2410c" /></marker>'
+            '</defs>'
         )
 
     for edge_index, (source, target, _data) in enumerate(edge_items):
         x1, y1 = point(source)
         x2, y2 = point(target)
-        marker = ' marker-end="url(#semantic-graphicalizer-arrow)"' if graph.is_directed() else ""
+        category = display_links[edge_index].get("category", "semantic")
+        stroke = {"causal": "#c2410c", "temporal": "#2563eb"}.get(category, "#9aa0a6")
+        stroke_width = {"causal": 2.5, "temporal": 1.5}.get(category, 1)
+        dash = ' stroke-dasharray="6 4"' if category == "temporal" else ""
+        marker_id = {
+            "causal": "semantic-graphicalizer-causal-arrow",
+            "temporal": "semantic-graphicalizer-temporal-arrow",
+        }.get(category, "semantic-graphicalizer-arrow")
+        marker = f' marker-end="url(#{marker_id})"' if graph.is_directed() else ""
         elements.append(
             f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
-            f'stroke="#9aa0a6" stroke-width="1" stroke-opacity="0.85"{marker} />'
+            f'stroke="{stroke}" stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
         )
         label = display_links[edge_index]["label"]
         if label:
@@ -699,7 +822,7 @@ def graph_to_static_svg(
                 (y1 + y2) / 2 - 4,
                 label,
                 font_size=11,
-                attributes='fill="#6b7280" text-anchor="middle" font-family="sans-serif"',
+                attributes=f'fill="{stroke}" text-anchor="middle" font-family="sans-serif"',
             )
             )
 
@@ -716,12 +839,31 @@ def graph_to_static_svg(
         )
         )
 
+    legend_y = 24
+    for index, (label, color, width_value, dash) in enumerate((
+        ("semantic", "#9aa0a6", 1, ""),
+        ("temporal", "#2563eb", 1.5, "6 4"),
+        ("causal", "#c2410c", 2.5, ""),
+    )):
+        x = 24 + index * 120
+        dash_attribute = f' stroke-dasharray="{dash}"' if dash else ""
+        elements.append(
+            f'<line x1="{x}" y1="{legend_y}" x2="{x + 24}" y2="{legend_y}" '
+            f'stroke="{color}" stroke-width="{width_value}"'
+            f'{dash_attribute} />'
+        )
+        elements.append(
+            f'<text x="{x + 30}" y="{legend_y + 4}" font-family="monospace" '
+            f'font-size="11" fill="currentColor">{xml_text(label)}</text>'
+        )
+
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{int(height)}" '
         f'viewBox="0 0 {int(width)} {int(height)}" role="img" aria-label="Ontology graph">'
         '<title>Ontology graph</title>'
-        '<desc>A deterministic Kamada-Kawai graph with ontology terms and surface mentions '
-        'as text-only nodes, and ontology relation IDs with proposition fragments as edge labels.</desc>'
+        '<desc>A deterministic narrative or Kamada-Kawai graph with ontology terms and '
+        'surface mentions as text-only nodes, and ontology relation IDs with proposition '
+        'fragments as edge labels.</desc>'
         + "".join(elements)
         + "</svg>"
     )
@@ -768,6 +910,7 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         link_distance=kwargs.get("link_distance", 90),
         component_spacing=kwargs.get("component_spacing", 180),
         component_strength=kwargs.get("component_strength", 0.25),
+        layout=kwargs.get("layout", "auto"),
         d3_url=kwargs.get("d3_url", D3_CDN_URL),
     )
     data_url = "data:text/html;charset=utf-8," + quote(document, safe="")

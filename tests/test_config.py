@@ -15,7 +15,9 @@ def test_aesop_configuration_loads() -> None:
     assert ontology.name == "aesop-narrative"
     assert "Character" in ontology.term_ids
     assert "interacts_with" in ontology.relation_ids
+    assert ontology.link_relation_ids == {"before", "after", "causes"}
     assert prompts.render("summarize", text="A tale.", ontology="demo")
+    assert prompts.render("link", text="[]", ontology="demo")
 
 
 def test_ontology_rejects_duplicate_terms() -> None:
@@ -46,5 +48,5 @@ def test_ontology_rejects_unknown_relation_terms() -> None:
 
 
 def test_prompts_require_all_pipeline_stages() -> None:
-    with pytest.raises(ConfigurationError, match="must contain exactly"):
+    with pytest.raises(ConfigurationError, match="must contain"):
         load_prompts({"domain": "bad", "version": "1", "stages": {}})

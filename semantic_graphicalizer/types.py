@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import networkx as nx
+
+
+PropositionKind = Literal["event", "state", "statement"]
+LinkCategory = Literal["temporal", "causal"]
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ class Proposition:
     chunk: Chunk
     text: str
     source_text: str
+    kind: PropositionKind
     confidence: float | None = None
     qualification: dict[str, Any] = field(default_factory=dict)
 
@@ -60,6 +65,24 @@ class Triple:
     source_text: str = ""
     source_start_char: int | None = None
     source_end_char: int | None = None
+
+
+@dataclass(frozen=True)
+class PropositionLink:
+    source_proposition_id: str
+    target_proposition_id: str
+    predicate: str
+    category: LinkCategory
+    confidence: float | None = None
+    qualification: dict[str, Any] = field(default_factory=dict)
+    provenance: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StateInterval:
+    state_proposition_id: str
+    starts_at: str | None = None
+    ends_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,3 +109,6 @@ class DocumentTrace:
     triples: list[Triple]
     graph: nx.MultiDiGraph
     stats: list[StageStat] = field(default_factory=list)
+    links: list[PropositionLink] = field(default_factory=list)
+    state_intervals: list[StateInterval] = field(default_factory=list)
+    semantic_graph: nx.MultiDiGraph | None = None

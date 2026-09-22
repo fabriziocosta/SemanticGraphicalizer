@@ -35,6 +35,8 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
                 "label": "animal\nfox",
                 "ontology_label": "animal",
                 "source_fragment": "fox",
+                "node_type": "entity",
+                "proposition_kind": None,
                 "sequence": 0,
                 "component_order": 0,
                 "component_index": 0,
@@ -45,6 +47,8 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
             "label": "animal\ncrow",
                 "ontology_label": "animal",
                 "source_fragment": "crow",
+                "node_type": "entity",
+                "proposition_kind": None,
                 "sequence": 1,
                 "component_order": 0,
                 "component_index": 1,
@@ -57,9 +61,45 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
             "label": "interacts_with\nThe fox interacts with the crow.",
             "predicate": "interacts_with",
             "source_fragment": "The fox interacts with the crow.",
+            "edge_type": "semantic",
+            "category": "semantic",
             "directed": True,
         }],
     }
+
+
+def test_d3_data_exposes_proposition_and_edge_categories() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node(
+        "proposition::p1",
+        label="event",
+        mentions=["The fox runs."],
+        node_type="proposition",
+        proposition_kind="event",
+        sequence=0,
+    )
+    graph.add_node(
+        "proposition::p2",
+        label="event",
+        mentions=["The fox arrives."],
+        node_type="proposition",
+        proposition_kind="event",
+        sequence=1,
+    )
+    graph.add_edge(
+        "proposition::p1",
+        "proposition::p2",
+        predicate="causes",
+        category="causal",
+        edge_type="causal",
+    )
+
+    data = graph_to_d3_data(graph)
+
+    assert data["nodes"][0]["node_type"] == "proposition"
+    assert data["nodes"][0]["proposition_kind"] == "event"
+    assert data["links"][0]["category"] == "causal"
+    assert data["links"][0]["edge_type"] == "causal"
 
 
 def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
@@ -71,11 +111,14 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" in html
     assert '.selectAll("line")' in html
     assert '.selectAll("text")' in html
-    assert 'attr("stroke", "#9aa0a6")' in html
-    assert 'attr("stroke-width", 1)' in html
+    assert 'attr("stroke", d => d.category === "causal"' in html
+    assert 'attr("stroke-width", d => d.category === "causal"' in html
     assert 'attr("marker-end", d => d.directed' in html
     assert 'append("marker")' in html
-    assert 'force("component-order"' in html
+    assert 'force("x", d3.forceX(xTarget)' in html
+    assert 'force("y", useTimeline ? d3.forceY(timelineYTarget)' in html
+    assert 'category === "causal" ? "#c2410c"' in html
+    assert 'category === "temporal" ? "#2563eb"' in html
     assert "nodeRadius" in html
     assert "setMultilineText" in html
     assert ".append(\"tspan\")" in html
@@ -87,6 +130,9 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "d.pinned = true" in html
     assert '.on("dblclick"' in html
     assert "drag the background to pan" in html
+    assert "temporalArrowId" in html
+    assert "causalArrowId" in html
+    assert "legend" in html
     assert "<circle" not in html
 
 
@@ -104,7 +150,7 @@ def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
     )
 
     assert 'force("charge", d3.forceManyBody().strength(-180.0))' in html
-    assert 'force("link", d3.forceLink(data.links).id(d => d.id).distance(linkDistance)' in tuned
+    assert 'force("link", d3.forceLink(data.links).id(d => d.id).distance(d =>' in tuned
     assert "const linkDistance = 70.0;" in tuned
     assert "const requestedComponentSpacing = 120.0;" in tuned
     assert "const componentStrength = 0.1;" in tuned
@@ -113,6 +159,41 @@ def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
         graph_to_d3_html(graph, charge_strength=10)
     with pytest.raises(ValueError, match="link_distance"):
         graph_to_d3_html(graph, link_distance=0)
+
+
+def test_timeline_layout_is_available_and_auto_detects_propositions() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node(
+        "proposition::p1",
+        label="event",
+        mentions=["The fox runs."],
+        node_type="proposition",
+        proposition_kind="event",
+        sequence=0,
+    )
+    graph.add_node(
+        "proposition::p2",
+        label="event",
+        mentions=["The fox arrives."],
+        node_type="proposition",
+        proposition_kind="event",
+        sequence=1,
+    )
+    graph.add_edge(
+        "proposition::p1",
+        "proposition::p2",
+        predicate="next_in_narrative",
+        category="temporal",
+        edge_type="temporal",
+    )
+
+    html = graph_to_d3_html(graph, layout="auto")
+
+    assert 'const layoutMode = "auto";' in html
+    assert "const useTimeline = layoutMode === \"timeline\"" in html
+    assert "timelineScale" in html
+    assert "timelineYTarget" in html
+    assert 'stroke-dasharray", d => d.category === "temporal"' in html
 
 
 def test_labels_use_new_lines_and_wrap_at_max_width() -> None:

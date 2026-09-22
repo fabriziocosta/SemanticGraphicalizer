@@ -53,11 +53,19 @@ class OntologyRelation:
 
 
 @dataclass(frozen=True)
+class OntologyLinkRelation:
+    id: str
+    category: str
+    description: str
+
+
+@dataclass(frozen=True)
 class OntologyConfig:
     name: str
     version: str
     terms: tuple[OntologyTerm, ...]
     relations: tuple[OntologyRelation, ...]
+    link_relations: tuple[OntologyLinkRelation, ...] = ()
 
     @property
     def term_ids(self) -> set[str]:
@@ -67,6 +75,10 @@ class OntologyConfig:
     def relation_ids(self) -> set[str]:
         return {relation.id for relation in self.relations}
 
+    @property
+    def link_relation_ids(self) -> set[str]:
+        return {relation.id for relation in self.link_relations}
+
     def as_prompt(self) -> str:
         terms = "\n".join(f"- {term.id}: {term.description}" for term in self.terms)
         relations = "\n".join(
@@ -75,7 +87,12 @@ class OntologyConfig:
             f" target: {', '.join(relation.target_terms) or 'any'})"
             for relation in self.relations
         )
-        return f"Ontology: {self.name} (version {self.version})\nTerms:\n{terms}\nRelations:\n{relations}"
+        link_relations = "\n".join(
+            f"- {relation.id}: {relation.description} (category: {relation.category})"
+            for relation in self.link_relations
+        )
+        link_section = f"\nProposition links:\n{link_relations}" if link_relations else ""
+        return f"Ontology: {self.name} (version {self.version})\nTerms:\n{terms}\nRelations:\n{relations}{link_section}"
 
 
 @dataclass(frozen=True)
@@ -121,12 +138,13 @@ def load_ontology(source: str | Path | Mapping[str, Any] | OntologyConfig) -> On
     if isinstance(source, OntologyConfig):
         return source
     raw = _read_yaml(source)
-    expected = {"name", "version", "terms", "relations"}
+    required = {"name", "version", "terms", "relations"}
+    expected = required | {"link_relations"}
     unexpected = set(raw) - expected
-    missing = expected - set(raw)
+    missing = required - set(raw)
     if missing or unexpected:
         raise ConfigurationError(
-            f"ontology must contain exactly {sorted(expected)}; missing={sorted(missing)}, "
+            f"ontology must contain required fields {sorted(required)} and optional link_relations; missing={sorted(missing)}, "
             f"unexpected={sorted(unexpected)}"
         )
     name = _string(raw["name"], "ontology.name")
@@ -173,7 +191,31 @@ def load_ontology(source: str | Path | Mapping[str, Any] | OntologyConfig) -> On
     relation_ids = [relation.id for relation in relations]
     if len(relation_ids) != len(set(relation_ids)):
         raise ConfigurationError("ontology relation IDs must be unique")
-    return OntologyConfig(name, version, tuple(terms), tuple(relations))
+
+    raw_link_relations = raw.get("link_relations", [])
+    if not isinstance(raw_link_relations, list):
+        raise ConfigurationError("ontology.link_relations must be a list")
+    link_relations: list[OntologyLinkRelation] = []
+    for index, raw_link_relation in enumerate(raw_link_relations):
+        item = _mapping(raw_link_relation, f"ontology.link_relations[{index}]")
+        if set(item) != {"id", "category", "description"}:
+            raise ConfigurationError(
+                f"ontology.link_relations[{index}] must contain exactly id, category, and description"
+            )
+        category = _string(item["category"], f"ontology.link_relations[{index}].category")
+        if category not in {"temporal", "causal"}:
+            raise ConfigurationError(
+                f"ontology.link_relations[{index}].category must be 'temporal' or 'causal'"
+            )
+        link_relations.append(OntologyLinkRelation(
+            _string(item["id"], f"ontology.link_relations[{index}].id"),
+            category,
+            _string(item["description"], f"ontology.link_relations[{index}].description"),
+        ))
+    link_relation_ids = [relation.id for relation in link_relations]
+    if len(link_relation_ids) != len(set(link_relation_ids)):
+        raise ConfigurationError("ontology link relation IDs must be unique")
+    return OntologyConfig(name, version, tuple(terms), tuple(relations), tuple(link_relations))
 
 
 def load_prompts(source: str | Path | Mapping[str, Any] | PromptConfig) -> PromptConfig:
@@ -192,9 +234,10 @@ def load_prompts(source: str | Path | Mapping[str, Any] | PromptConfig) -> Promp
     version = _string(raw["version"], "prompts.version")
     raw_stages = _mapping(raw["stages"], "prompts.stages")
     required_stages = {"summarize", "normalize", "decompose", "triple"}
-    if set(raw_stages) != required_stages:
+    allowed_stages = required_stages | {"link"}
+    if not set(raw_stages).issubset(allowed_stages) or not required_stages.issubset(raw_stages):
         raise ConfigurationError(
-            f"prompts.stages must contain exactly {sorted(required_stages)}"
+            f"prompts.stages must contain {sorted(required_stages)} and may optionally include 'link'"
         )
     stages: dict[str, PromptStage] = {}
     for stage, raw_stage in raw_stages.items():

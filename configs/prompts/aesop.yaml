@@ -66,3 +66,23 @@ stages:
       proposition_id, subject {mention, label, optional key}, predicate,
       object {mention, label, optional key}, and optional proposition,
       confidence, and qualification.
+  link:
+    system: >-
+      You identify explicit temporal and causal relationships between atomic
+      propositions and identify the temporal extent of narrative states.
+    instruction: |
+      Use only proposition IDs provided below. Return a link only when the
+      source text explicitly supports the configured temporal or causal
+      relation. Do not infer causality merely because one proposition follows
+      another. Narrative order is added separately by the program.
+
+      Ontology:
+      {ontology}
+
+      Atomic propositions:
+      {text}
+    output: >-
+      Return JSON with a links list and a state_intervals list. Each link must
+      contain source_proposition_id, target_proposition_id, predicate,
+      confidence, and qualification. Each state interval must contain
+      state_proposition_id and optional starts_at and ends_at proposition IDs.

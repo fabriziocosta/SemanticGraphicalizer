@@ -30,6 +30,7 @@ class FakeModel:
                 "id": "p1",
                 "text": "The fox interacts with the crow.",
                 "source_text": "The fox met the crow.",
+                "kind": "event",
             }]}
         if stage == "triple":
             return {"triples": [{
@@ -40,6 +41,8 @@ class FakeModel:
                 "object": {"mention": "crow", "label": "Animal"},
                 "proposition": "The fox interacts with the crow.",
             }]}
+        if stage == "link":
+            return {"links": [], "state_intervals": []}
         raise AssertionError(stage)
 
 
@@ -58,9 +61,11 @@ def test_transformer_returns_one_multidigraph_per_document() -> None:
     graph = graphs[0]
     assert graph.nodes["animal::fox"]["label"] == "Animal"
     edges = list(graph.edges(data=True, keys=True))
-    assert len(edges) == 1
-    assert edges[0][3]["label"] == "The fox interacts with the crow."
-    assert edges[0][3]["predicate"] == "interacts_with"
+    semantic_edges = [edge for edge in edges if edge[3].get("edge_type") == "semantic"]
+    assert len(semantic_edges) == 1
+    assert semantic_edges[0][3]["label"] == "The fox interacts with the crow."
+    assert semantic_edges[0][3]["predicate"] == "interacts_with"
+    assert any(data.get("node_type") == "proposition" for _, data in graph.nodes(data=True))
     expected_document_id = f"document-{sha256('The fox met the crow.'.encode()).hexdigest()[:12]}"
     assert graph.graph["document_id"] == expected_document_id
     assert graph.graph["document_text"] == "The fox met the crow."
@@ -86,7 +91,7 @@ def test_transformer_preserves_multiple_edges() -> None:
             return response
 
     graph = make_transformer(TwoEdgeModel()).fit_transform(["A tale."])[0]
-    assert graph.number_of_edges() == 2
+    assert sum(data.get("edge_type") == "semantic" for _, _, data in graph.edges(data=True)) == 2
 
 
 def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
@@ -96,7 +101,7 @@ def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
     assert trace.propositions[0].text
     assert trace.triples[0].predicate == "interacts_with"
     assert [stat.stage for stat in trace.stats] == [
-        "segment", "summarize", "normalize", "decompose", "triple", "integrate", "total",
+        "segment", "summarize", "normalize", "decompose", "triple", "link", "integrate", "total",
     ]
     assert all(stat.elapsed_seconds >= 0 for stat in trace.stats)
     assert trace.stats[-1].details["edges"] == trace.graph.number_of_edges()
@@ -108,6 +113,179 @@ def test_transform_with_trace_contains_all_stages_and_provenance() -> None:
     node_provenance = trace.graph.nodes["animal::fox"]["provenance"][0]
     assert node_provenance["mention_start_char"] == 4
     assert node_provenance["mention_end_char"] == 7
+
+
+def test_reified_graph_contains_narrative_and_explicit_causal_links() -> None:
+    class NarrativeModel(FakeModel):
+        def generate(self, *, stage, prompt, schema, context):
+            if stage == "decompose":
+                return {"propositions": [
+                    {
+                        "id": "p1",
+                        "text": "The fox runs.",
+                        "source_text": "The fox runs.",
+                        "kind": "event",
+                        "confidence": None,
+                        "qualification": {},
+                    },
+                    {
+                        "id": "p2",
+                        "text": "The fox arrives.",
+                        "source_text": "The fox arrives.",
+                        "kind": "event",
+                        "confidence": None,
+                        "qualification": {},
+                    },
+                ]}
+            if stage == "link":
+                document_id = context["document_id"]
+                return {
+                    "links": [{
+                        "source_proposition_id": f"{document_id}:chunk-0:p1",
+                        "target_proposition_id": f"{document_id}:chunk-0:p2",
+                        "predicate": "causes",
+                        "confidence": 0.9,
+                        "qualification": {},
+                    }],
+                    "state_intervals": [],
+                }
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    trace = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+        NarrativeModel(),
+        verbose=False,
+    ).fit(["The fox runs. The fox arrives."]).transform_with_trace(["The fox runs. The fox arrives."])[0]
+
+    proposition_nodes = [
+        node for node, data in trace.graph.nodes(data=True)
+        if data.get("node_type") == "proposition"
+    ]
+    temporal_edges = [
+        data for _, _, data in trace.graph.edges(data=True)
+        if data.get("predicate") == "next_in_narrative"
+    ]
+    causal_edges = [
+        data for _, _, data in trace.graph.edges(data=True)
+        if data.get("predicate") == "causes"
+        and data.get("edge_type") == "causal"
+    ]
+
+    assert [trace.graph.nodes[node]["sequence"] for node in proposition_nodes] == [0, 1]
+    assert len(temporal_edges) == 1
+    assert len(causal_edges) == 1
+    assert trace.links[0].category == "causal"
+    assert trace.semantic_graph is not None
+
+
+def test_sequence_does_not_create_implicit_causal_edges() -> None:
+    trace = make_transformer().fit(["The fox met the crow."]).transform_with_trace(
+        ["The fox met the crow."]
+    )[0]
+
+    assert [link.predicate for link in trace.links] == []
+    assert [
+        data for _, _, data in trace.graph.edges(data=True)
+        if data.get("edge_type") == "causal"
+    ] == []
+    assert sum(
+        data.get("predicate") == "next_in_narrative"
+        for _, _, data in trace.graph.edges(data=True)
+    ) == 0
+
+
+def test_invalid_proposition_kind_is_rejected() -> None:
+    class InvalidKindModel(FakeModel):
+        def generate(self, *, stage, prompt, schema, context):
+            if stage == "decompose":
+                return {"propositions": [{
+                    "id": "p1",
+                    "text": "The fox interacts with the crow.",
+                    "source_text": "The fox met the crow.",
+                    "kind": "unknown",
+                }]}
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    with pytest.raises(StageOutputError, match="'kind' must be one"):
+        make_transformer(InvalidKindModel()).fit_transform(["A tale."])
+
+
+@pytest.mark.parametrize("invalid_link", [
+    {
+        "source_proposition_id": "missing",
+        "target_proposition_id": "also-missing",
+        "predicate": "causes",
+        "confidence": None,
+        "qualification": {},
+    },
+    {
+        "source_proposition_id": "placeholder",
+        "target_proposition_id": "placeholder",
+        "predicate": "not_configured",
+        "confidence": None,
+        "qualification": {},
+    },
+])
+def test_invalid_proposition_links_are_rejected(invalid_link) -> None:
+    class InvalidLinkModel(FakeModel):
+        def generate(self, *, stage, prompt, schema, context):
+            if stage == "decompose":
+                return {"propositions": [{
+                    "id": "p1",
+                    "text": "The fox interacts with the crow.",
+                    "source_text": "The fox met the crow.",
+                    "kind": "event",
+                }]}
+            if stage == "link":
+                document_id = context["document_id"]
+                link = dict(invalid_link)
+                if link["source_proposition_id"] == "placeholder":
+                    link["source_proposition_id"] = f"{document_id}:chunk-0:p1"
+                    link["target_proposition_id"] = f"{document_id}:chunk-0:p1"
+                return {"links": [link], "state_intervals": []}
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    with pytest.raises(StageOutputError, match="(known propositions|unknown proposition link relation)"):
+        make_transformer(InvalidLinkModel()).fit_transform(["A tale."])
+
+
+def test_state_interval_edges_are_reified_and_validated() -> None:
+    class StateModel(FakeModel):
+        def generate(self, *, stage, prompt, schema, context):
+            if stage == "decompose":
+                return {"propositions": [
+                    {"id": "p1", "text": "The fox runs.", "source_text": "The fox runs.", "kind": "event", "confidence": None, "qualification": {}},
+                    {"id": "s1", "text": "The fox is alert.", "source_text": "The fox is alert.", "kind": "state", "confidence": None, "qualification": {}},
+                    {"id": "p2", "text": "The fox arrives.", "source_text": "The fox arrives.", "kind": "event", "confidence": None, "qualification": {}},
+                ]}
+            if stage == "link":
+                document_id = context["document_id"]
+                return {
+                    "links": [],
+                    "state_intervals": [{
+                        "state_proposition_id": f"{document_id}:chunk-0:s1",
+                        "starts_at": f"{document_id}:chunk-0:p1",
+                        "ends_at": f"{document_id}:chunk-0:p2",
+                    }],
+                }
+            return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
+
+    trace = SemanticGraphicalizer(
+        ROOT / "configs/ontologies/aesop.yaml",
+        ROOT / "configs/prompts/aesop.yaml",
+        StateModel(),
+        verbose=False,
+    ).fit(["The fox runs. The fox is alert. The fox arrives."]).transform_with_trace(
+        ["The fox runs. The fox is alert. The fox arrives."]
+    )[0]
+
+    interval_edges = [
+        data for _, _, data in trace.graph.edges(data=True)
+        if data.get("edge_type") == "state_interval"
+    ]
+    assert {edge["predicate"] for edge in interval_edges} == {"starts_at", "ends_at"}
+    assert trace.state_intervals[0].state_proposition_id.endswith(":s1")
 
 
 def test_document_ids_are_stable_across_transform_batches() -> None:
@@ -135,7 +313,7 @@ def test_overlapping_duplicate_triples_are_integrated_once() -> None:
 
     graph = transformer.fit_transform(["The fox met the crow."])[0]
 
-    assert graph.number_of_edges() == 1
+    assert sum(data.get("edge_type") == "semantic" for _, _, data in graph.edges(data=True)) == 1
 
 
 def test_transformer_display_accepts_trace_graph() -> None:
@@ -149,7 +327,7 @@ def test_transformer_display_accepts_trace_graph() -> None:
 def test_verbose_reports_pipeline_stages_and_runtimes(capsys) -> None:
     make_transformer().fit_transform(["A tale."])
     output = capsys.readouterr().out
-    for stage in ("segment", "summarize", "normalize", "decompose", "triple", "integrate", "total"):
+    for stage in ("segment", "summarize", "normalize", "decompose", "triple", "link", "integrate", "total"):
         assert f"] {stage}:" in output
     assert any(unit in output for unit in ("ms", "s", "min"))
 
@@ -198,8 +376,8 @@ def test_model_failures_are_retried_and_wrapped() -> None:
         model,
         retry_backoff=0,
     ).fit_transform(["A tale."])[0]
-    assert graph.number_of_edges() == 1
-    assert model.calls == 6
+    assert sum(data.get("edge_type") == "semantic" for _, _, data in graph.edges(data=True)) == 1
+    assert model.calls == 7
 
     class AlwaysFailModel(FakeModel):
         def generate(self, **kwargs):
@@ -311,3 +489,8 @@ def test_triple_schema_encodes_relation_endpoint_constraints() -> None:
         "Animal", "Character", "Human",
     ]
     assert has_trait["object"]["properties"]["label"]["enum"] == ["Trait"]
+    link_schema = model.schemas["link"]
+    assert link_schema["properties"]["links"]["items"]["properties"]["predicate"]["enum"] == [
+        "after", "before", "causes",
+    ]
+    assert link_schema["required"] == ["links", "state_intervals"]

@@ -21,7 +21,9 @@ from .types import (
     EntityMention,
     NormalizedText,
     Proposition,
+    PropositionLink,
     Summary,
+    StateInterval,
     StageStat,
     Triple,
 )
@@ -190,10 +192,11 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                         "id": {"type": "string"},
                         "text": {"type": "string"},
                         "source_text": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["event", "state", "statement"]},
                         "confidence": {"type": ["number", "null"]},
                         "qualification": _QUALIFICATION_SCHEMA,
                     },
-                    "required": ["id", "text", "source_text", "confidence", "qualification"],
+                    "required": ["id", "text", "source_text", "kind", "confidence", "qualification"],
                     "additionalProperties": False,
                 },
             }
@@ -229,6 +232,44 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["triples"],
         "additionalProperties": False,
     },
+    "link": {
+        "type": "object",
+        "properties": {
+            "links": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source_proposition_id": {"type": "string"},
+                        "target_proposition_id": {"type": "string"},
+                        "predicate": {"type": "string"},
+                        "confidence": {"type": ["number", "null"]},
+                        "qualification": _QUALIFICATION_SCHEMA,
+                    },
+                    "required": [
+                        "source_proposition_id", "target_proposition_id", "predicate",
+                        "confidence", "qualification",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "state_intervals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "state_proposition_id": {"type": "string"},
+                        "starts_at": {"type": ["string", "null"]},
+                        "ends_at": {"type": ["string", "null"]},
+                    },
+                    "required": ["state_proposition_id", "starts_at", "ends_at"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["links", "state_intervals"],
+        "additionalProperties": False,
+    },
 }
 
 
@@ -260,6 +301,18 @@ def _as_float(value: Any, field: str, stage: str, document_id: str, chunk_id: st
     if not isinstance(value, (int, float)) or not 0 <= float(value) <= 1:
         raise StageOutputError(stage, f"'{field}' must be a number between 0 and 1", document_id=document_id, chunk_id=chunk_id)
     return float(value)
+
+
+def _as_proposition_kind(value: Any, stage: str, document_id: str, chunk_id: str) -> str:
+    kind = _as_text(value, "kind", stage, document_id, chunk_id)
+    if kind not in {"event", "state", "statement"}:
+        raise StageOutputError(
+            stage,
+            "'kind' must be one of 'event', 'state', or 'statement'",
+            document_id=document_id,
+            chunk_id=chunk_id,
+        )
+    return kind
 
 
 def _find_text_span(text: str, value: str) -> tuple[int, int] | None:
@@ -380,6 +433,11 @@ class SemanticPipeline:
                 relation_schema["properties"]["object"] = object_schema
                 relation_schemas.append(relation_schema)
             schema["properties"]["triples"]["items"] = {"anyOf": relation_schemas}
+        elif stage == "link":
+            schema["properties"]["links"]["items"]["properties"]["predicate"] = {
+                "type": "string",
+                "enum": sorted(self.ontology.link_relation_ids),
+            }
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -432,6 +490,12 @@ class SemanticPipeline:
             text = _as_text(item.get("text"), "text", "decompose", normalized.chunk.document_id, normalized.chunk.chunk_id)
             source_text = item.get("source_text", normalized.chunk.text)
             source_text = _as_text(source_text, "source_text", "decompose", normalized.chunk.document_id, normalized.chunk.chunk_id)
+            kind = _as_proposition_kind(
+                item.get("kind"),
+                "decompose",
+                normalized.chunk.document_id,
+                normalized.chunk.chunk_id,
+            )
             qualification = item.get("qualification", {})
             if not isinstance(qualification, dict):
                 raise StageOutputError("decompose", "'qualification' must be a mapping", document_id=normalized.chunk.document_id, chunk_id=normalized.chunk.chunk_id)
@@ -440,6 +504,7 @@ class SemanticPipeline:
                 chunk=normalized.chunk,
                 text=text,
                 source_text=source_text,
+                kind=kind,  # type: ignore[arg-type]
                 confidence=_as_float(item.get("confidence"), "confidence", "decompose", normalized.chunk.document_id, normalized.chunk.chunk_id),
                 qualification=qualification,
             ))
@@ -451,6 +516,7 @@ class SemanticPipeline:
                 "id": proposition.proposition_id,
                 "text": proposition.text,
                 "source_text": proposition.source_text,
+                "kind": proposition.kind,
                 "confidence": proposition.confidence,
                 "qualification": proposition.qualification,
             }
@@ -536,9 +602,143 @@ class SemanticPipeline:
             ))
         return triples
 
-    def _integrate(self, document_id: str, document_text: str, triples: Sequence[Triple]) -> nx.MultiDiGraph:
-        graph = nx.MultiDiGraph(document_id=document_id, document_text=document_text)
+    def _links(
+        self,
+        document_id: str,
+        document_text: str,
+        propositions: Sequence[Proposition],
+    ) -> tuple[list[PropositionLink], list[StateInterval]]:
+        """Extract explicit proposition links and state intervals."""
+
+        if not self.ontology.link_relations or "link" not in self.prompts.stages:
+            return [], []
+        link_chunk = Chunk(
+            document_id=document_id,
+            chunk_id=f"{document_id}:links",
+            text=document_text,
+            start_char=0,
+            end_char=len(document_text),
+        )
+        proposition_text = json.dumps([
+            {
+                "id": proposition.proposition_id,
+                "kind": proposition.kind,
+                "text": proposition.text,
+                "source_text": proposition.source_text,
+            }
+            for proposition in propositions
+        ], ensure_ascii=False)
+        response = self._generate(
+            "link",
+            {"text": proposition_text, "ontology": self.ontology.as_prompt()},
+            chunk=link_chunk,
+        )
+        known = {proposition.proposition_id: proposition for proposition in propositions}
+        relation_by_id = {relation.id: relation for relation in self.ontology.link_relations}
+        raw_links = response.get("links")
+        if not isinstance(raw_links, list):
+            raise StageOutputError("link", "'links' must be a list", document_id=document_id, chunk_id=link_chunk.chunk_id)
+        links: list[PropositionLink] = []
+        seen_links: set[tuple[str, str, str]] = set()
+        for raw_link in raw_links:
+            item = _as_mapping(raw_link, "link", document_id, link_chunk.chunk_id)
+            source_id = _as_text(item.get("source_proposition_id"), "source_proposition_id", "link", document_id, link_chunk.chunk_id)
+            target_id = _as_text(item.get("target_proposition_id"), "target_proposition_id", "link", document_id, link_chunk.chunk_id)
+            if source_id not in known or target_id not in known:
+                raise StageOutputError(
+                    "link",
+                    "source and target proposition IDs must refer to known propositions",
+                    document_id=document_id,
+                    chunk_id=link_chunk.chunk_id,
+                )
+            predicate = _as_text(item.get("predicate"), "predicate", "link", document_id, link_chunk.chunk_id)
+            relation = relation_by_id.get(predicate)
+            if relation is None:
+                raise StageOutputError(
+                    "link",
+                    f"unknown proposition link relation '{predicate}'",
+                    document_id=document_id,
+                    chunk_id=link_chunk.chunk_id,
+                )
+            signature = (source_id, target_id, predicate)
+            if signature in seen_links:
+                continue
+            seen_links.add(signature)
+            qualification = item.get("qualification", {})
+            if not isinstance(qualification, dict):
+                raise StageOutputError("link", "'qualification' must be a mapping", document_id=document_id, chunk_id=link_chunk.chunk_id)
+            links.append(PropositionLink(
+                source_proposition_id=source_id,
+                target_proposition_id=target_id,
+                predicate=predicate,
+                category=relation.category,  # type: ignore[arg-type]
+                confidence=_as_float(item.get("confidence"), "confidence", "link", document_id, link_chunk.chunk_id),
+                qualification=qualification,
+                provenance={
+                    "document_id": document_id,
+                    "proposition_id": source_id,
+                    "target_proposition_id": target_id,
+                },
+            ))
+
+        raw_intervals = response.get("state_intervals")
+        if not isinstance(raw_intervals, list):
+            raise StageOutputError("link", "'state_intervals' must be a list", document_id=document_id, chunk_id=link_chunk.chunk_id)
+        intervals: list[StateInterval] = []
+        seen_states: set[str] = set()
+        for raw_interval in raw_intervals:
+            item = _as_mapping(raw_interval, "link", document_id, link_chunk.chunk_id)
+            state_id = _as_text(item.get("state_proposition_id"), "state_proposition_id", "link", document_id, link_chunk.chunk_id)
+            state = known.get(state_id)
+            if state is None or state.kind != "state":
+                raise StageOutputError(
+                    "link",
+                    "state_proposition_id must refer to a state proposition",
+                    document_id=document_id,
+                    chunk_id=link_chunk.chunk_id,
+                )
+            starts_at = item.get("starts_at")
+            ends_at = item.get("ends_at")
+            for field, proposition_id in (("starts_at", starts_at), ("ends_at", ends_at)):
+                if proposition_id is not None:
+                    proposition_id = _as_text(proposition_id, field, "link", document_id, link_chunk.chunk_id)
+                    target = known.get(proposition_id)
+                    if target is None or target.kind != "event":
+                        raise StageOutputError(
+                            "link",
+                            f"{field} must refer to an event proposition",
+                            document_id=document_id,
+                            chunk_id=link_chunk.chunk_id,
+                        )
+                    if field == "starts_at":
+                        starts_at = proposition_id
+                    else:
+                        ends_at = proposition_id
+            if starts_at is None and ends_at is None:
+                raise StageOutputError(
+                    "link",
+                    "state interval must have starts_at or ends_at",
+                    document_id=document_id,
+                    chunk_id=link_chunk.chunk_id,
+                )
+            if state_id in seen_states:
+                continue
+            seen_states.add(state_id)
+            intervals.append(StateInterval(state_id, starts_at, ends_at))
+        return links, intervals
+
+    def _integrate(
+        self,
+        document_id: str,
+        document_text: str,
+        propositions: Sequence[Proposition],
+        triples: Sequence[Triple],
+        links: Sequence[PropositionLink],
+        state_intervals: Sequence[StateInterval],
+    ) -> tuple[nx.MultiDiGraph, nx.MultiDiGraph]:
+        semantic_graph = nx.MultiDiGraph(document_id=document_id, document_text=document_text)
         seen_triples: set[tuple[Any, ...]] = set()
+        accepted_triples: list[Triple] = []
 
         def provenance(triple: Triple) -> dict[str, Any]:
             source_start = triple.source_start_char
@@ -568,6 +768,26 @@ class SemanticPipeline:
                 "mention_end_char": mention_end,
             }
 
+        def ensure_entity(node_id: str, entity: EntityMention, triple: Triple) -> None:
+            if node_id not in semantic_graph:
+                semantic_graph.add_node(
+                    node_id,
+                    label=entity.ontology_term,
+                    node_type="entity",
+                    canonical_id=node_id,
+                    sequence=semantic_graph.number_of_nodes(),
+                    document_id=document_id,
+                    document_text=document_text,
+                    mentions=[],
+                    provenance=[],
+                )
+            node = semantic_graph.nodes[node_id]
+            if entity.mention not in node["mentions"]:
+                node["mentions"].append(entity.mention)
+            node_provenance = mention_provenance(triple, entity)
+            if node_provenance not in node["provenance"]:
+                node["provenance"].append(node_provenance)
+
         for index, triple in enumerate(triples):
             subject_id = self.resolver.resolve(triple.subject)
             object_id = self.resolver.resolve(triple.object)
@@ -582,30 +802,16 @@ class SemanticPipeline:
             if signature in seen_triples:
                 continue
             seen_triples.add(signature)
-            for node_id, entity in ((subject_id, triple.subject), (object_id, triple.object)):
-                if node_id not in graph:
-                    graph.add_node(
-                        node_id,
-                        label=entity.ontology_term,
-                        canonical_id=node_id,
-                        sequence=graph.number_of_nodes(),
-                        document_id=document_id,
-                        document_text=document_text,
-                        mentions=[],
-                        provenance=[],
-                    )
-                node = graph.nodes[node_id]
-                if entity.mention not in node["mentions"]:
-                    node["mentions"].append(entity.mention)
-                node_provenance = mention_provenance(triple, entity)
-                if node_provenance not in node["provenance"]:
-                    node["provenance"].append(node_provenance)
-            graph.add_edge(
+            ensure_entity(subject_id, triple.subject, triple)
+            ensure_entity(object_id, triple.object, triple)
+            semantic_graph.add_edge(
                 subject_id,
                 object_id,
                 key=f"{triple.chunk.chunk_id}:{triple.triple_id}:{index}",
                 label=triple.proposition,
                 predicate=triple.predicate,
+                edge_type="semantic",
+                category="semantic",
                 proposition_id=triple.proposition_id,
                 confidence=triple.confidence,
                 qualification=triple.qualification,
@@ -613,7 +819,115 @@ class SemanticPipeline:
                 document_text=document_text,
                 provenance=provenance(triple),
             )
-        return graph
+            accepted_triples.append(triple)
+
+        graph = semantic_graph.copy()
+        graph.graph["unified"] = True
+        proposition_nodes: dict[str, str] = {}
+        for sequence, proposition in enumerate(propositions):
+            node_id = f"proposition::{proposition.proposition_id}"
+            proposition_nodes[proposition.proposition_id] = node_id
+            graph.add_node(
+                node_id,
+                label=proposition.kind,
+                node_type="proposition",
+                proposition_kind=proposition.kind,
+                proposition_id=proposition.proposition_id,
+                sequence=sequence,
+                document_id=document_id,
+                document_text=document_text,
+                mentions=[proposition.text],
+                source_text=proposition.source_text,
+                provenance={
+                    "document_id": document_id,
+                    "chunk_id": proposition.chunk.chunk_id,
+                    "start_char": proposition.chunk.start_char,
+                    "end_char": proposition.chunk.end_char,
+                    "source_text": proposition.source_text,
+                    "proposition_id": proposition.proposition_id,
+                },
+                confidence=proposition.confidence,
+                qualification=proposition.qualification,
+            )
+
+        role_edges: set[tuple[str, str, str]] = set()
+        for index, triple in enumerate(accepted_triples):
+            proposition_node = proposition_nodes.get(triple.proposition_id)
+            if proposition_node is None:
+                continue
+            subject_id = self.resolver.resolve(triple.subject)
+            object_id = self.resolver.resolve(triple.object)
+            for entity_id, role in ((subject_id, "subject_of"), (object_id, "object_of")):
+                signature = (entity_id, proposition_node, role)
+                if signature in role_edges:
+                    continue
+                role_edges.add(signature)
+                graph.add_edge(
+                    entity_id,
+                    proposition_node,
+                    key=f"role:{triple.proposition_id}:{role}:{index}",
+                    label=graph.nodes[proposition_node]["mentions"][0],
+                    predicate=role,
+                    edge_type="participation",
+                    category="semantic",
+                    proposition_id=triple.proposition_id,
+                    document_id=document_id,
+                    document_text=document_text,
+                    provenance=provenance(triple),
+                )
+
+        for source, target in zip(propositions, propositions[1:]):
+            graph.add_edge(
+                proposition_nodes[source.proposition_id],
+                proposition_nodes[target.proposition_id],
+                key=f"temporal:next:{source.proposition_id}:{target.proposition_id}",
+                label="",
+                predicate="next_in_narrative",
+                edge_type="temporal",
+                category="temporal",
+                proposition_id=source.proposition_id,
+                target_proposition_id=target.proposition_id,
+                document_id=document_id,
+                document_text=document_text,
+            )
+
+        for link in links:
+            graph.add_edge(
+                proposition_nodes[link.source_proposition_id],
+                proposition_nodes[link.target_proposition_id],
+                key=f"link:{link.predicate}:{link.source_proposition_id}:{link.target_proposition_id}",
+                label="",
+                predicate=link.predicate,
+                edge_type=link.category,
+                category=link.category,
+                proposition_id=link.source_proposition_id,
+                target_proposition_id=link.target_proposition_id,
+                confidence=link.confidence,
+                qualification=link.qualification,
+                document_id=document_id,
+                document_text=document_text,
+                provenance=link.provenance,
+            )
+
+        for interval in state_intervals:
+            state_node = proposition_nodes[interval.state_proposition_id]
+            for predicate, target_id in (("starts_at", interval.starts_at), ("ends_at", interval.ends_at)):
+                if target_id is None:
+                    continue
+                graph.add_edge(
+                    state_node,
+                    proposition_nodes[target_id],
+                    key=f"state:{predicate}:{interval.state_proposition_id}:{target_id}",
+                    label="",
+                    predicate=predicate,
+                    edge_type="state_interval",
+                    category="temporal",
+                    proposition_id=interval.state_proposition_id,
+                    target_proposition_id=target_id,
+                    document_id=document_id,
+                    document_text=document_text,
+                )
+        return graph, semantic_graph
 
     def process(self, document_id: str, text: str) -> DocumentTrace:
         total_started = time.perf_counter()
@@ -699,7 +1013,26 @@ class SemanticPipeline:
             triples.extend(chunk_triples)
 
         started = time.perf_counter()
-        graph = self._integrate(document_id, text, triples)
+        links, state_intervals = self._links(document_id, text, propositions)
+        self._record_stat(
+            stats,
+            document_id=document_id,
+            stage="link",
+            started=started,
+            input_count=len(propositions),
+            output_count=len(links),
+            details={"state_intervals": len(state_intervals)},
+        )
+
+        started = time.perf_counter()
+        graph, semantic_graph = self._integrate(
+            document_id,
+            text,
+            propositions,
+            triples,
+            links,
+            state_intervals,
+        )
         self._record_stat(
             stats,
             document_id=document_id,
@@ -720,8 +1053,22 @@ class SemanticPipeline:
                 "chunks": len(chunks),
                 "propositions": len(propositions),
                 "triples": len(triples),
+                "links": len(links),
                 "nodes": graph.number_of_nodes(),
                 "edges": graph.number_of_edges(),
             },
         )
-        return DocumentTrace(document_id, text, chunks, summaries, normalized, propositions, triples, graph, stats)
+        return DocumentTrace(
+            document_id=document_id,
+            text=text,
+            chunks=chunks,
+            summaries=summaries,
+            normalized=normalized,
+            propositions=propositions,
+            triples=triples,
+            graph=graph,
+            stats=stats,
+            links=links,
+            state_intervals=state_intervals,
+            semantic_graph=semantic_graph,
+        )
