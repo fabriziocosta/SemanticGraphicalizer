@@ -10,7 +10,12 @@ class StageOutputError(ValueError):
 
     def __init__(self, stage: str, message: str, *, document_id: str | None = None,
                  chunk_id: str | None = None) -> None:
-        location = ".".join(value for value in (document_id, chunk_id) if value)
+        if document_id and chunk_id and (
+            chunk_id == document_id or chunk_id.startswith(f"{document_id}:")
+        ):
+            location = chunk_id
+        else:
+            location = ".".join(value for value in (document_id, chunk_id) if value)
         suffix = f" ({location})" if location else ""
         super().__init__(f"Invalid {stage} output{suffix}: {message}")
         self.stage = stage

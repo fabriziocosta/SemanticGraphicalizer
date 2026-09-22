@@ -714,13 +714,6 @@ class SemanticPipeline:
                         starts_at = proposition_id
                     else:
                         ends_at = proposition_id
-            if starts_at is None and ends_at is None:
-                raise StageOutputError(
-                    "link",
-                    "state interval must have starts_at or ends_at",
-                    document_id=document_id,
-                    chunk_id=link_chunk.chunk_id,
-                )
             if state_id in seen_states:
                 continue
             seen_states.add(state_id)

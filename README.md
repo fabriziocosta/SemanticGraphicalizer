@@ -33,7 +33,8 @@ with `proposition_kind` (`event`, `state`, or `statement`) and document-order
 explicit causal links are represented as typed edges. The legacy entity-only
 projection is available as `DocumentTrace.semantic_graph`.
 `transform_with_trace` exposes all intermediate stages, links, state intervals,
-and provenance.
+and provenance. State intervals may have one or both temporal boundaries
+unresolved; only identified `starts_at` and `ends_at` edges are materialized.
 Document IDs are stable content-derived IDs by default; pass
 `document_id_fn=(text, index) -> str` when an external identifier is available.
 Node and edge provenance includes source spans when the model's source text can
