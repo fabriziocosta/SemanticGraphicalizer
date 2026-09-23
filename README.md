@@ -58,6 +58,8 @@ The download and cache logic is reusable outside the notebook:
 from semantic_graphicalizer import load_aesop_fables
 
 stories = load_aesop_fables(limit=2)
+# Reproducible random selection from the full cached collection:
+stories = load_aesop_fables(limit=2, select_at_random=True, rand_seed=7)
 ```
 
 This returns a `list[str]`, one complete story per item, and caches the parsed

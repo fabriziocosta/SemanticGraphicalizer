@@ -604,11 +604,29 @@ def _d3_script(
     }});
   }};
 
+  const endpointId = endpoint => endpoint && typeof endpoint === "object" ? endpoint.id : endpoint;
+  const isSelfLoop = d => String(endpointId(d.source)) === String(endpointId(d.target));
+
   const link = viewport.append("g")
     .attr("aria-hidden", "true")
     .selectAll("line")
     .data(data.links)
     .join("line")
+    .attr("stroke", d => d.category === "causal" ? "#c2410c" : d.category === "temporal" ? "#2563eb" : "#9aa0a6")
+    .attr("stroke-width", d => d.category === "causal" ? 2.5 : d.category === "temporal" ? 1.5 : 1)
+    .attr("stroke-opacity", 0.85)
+    .attr("stroke-dasharray", d => d.category === "temporal" ? "6 4" : null)
+    .attr("display", d => isSelfLoop(d) ? "none" : null)
+    .attr("marker-end", d => d.directed
+      ? `url(#${{d.category === "causal" ? causalArrowId : d.category === "temporal" ? temporalArrowId : arrowId}})`
+      : null);
+
+  const selfLoop = viewport.append("g")
+    .attr("aria-hidden", "true")
+    .selectAll("path")
+    .data(data.links.filter(isSelfLoop))
+    .join("path")
+    .attr("fill", "none")
     .attr("stroke", d => d.category === "causal" ? "#c2410c" : d.category === "temporal" ? "#2563eb" : "#9aa0a6")
     .attr("stroke-width", d => d.category === "causal" ? 2.5 : d.category === "temporal" ? 1.5 : 1)
     .attr("stroke-opacity", 0.85)
@@ -636,6 +654,22 @@ def _d3_script(
     return (index - (count - 1) / 2) * 18;
   }};
   const linkGeometry = d => {{
+    if (isSelfLoop(d)) {{
+      const radius = Math.max(34, Math.min(86, edgeLabelWidth(d) * 1.6));
+      const verticalOffset = edgeOffset(d) * 1.8;
+      const x = d.source.x;
+      const y = d.source.y + verticalOffset;
+      const startX = x + 10;
+      const startY = y - 8;
+      const endY = y + 8;
+      const controlX = x + radius + 30;
+      return {{
+        selfLoop: true,
+        path: `M${{startX}},${{startY}} C${{controlX}},${{y - radius}} ${{controlX}},${{y + radius}} ${{startX}},${{endY}}`,
+        labelX: x + radius + 34,
+        labelY: y - radius - 8,
+      }};
+    }}
     const dx = d.target.x - d.source.x;
     const dy = d.target.y - d.source.y;
     const length = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -753,6 +787,8 @@ def _d3_script(
         .attr("y1", d => linkGeometry(d).y1)
         .attr("x2", d => linkGeometry(d).x2)
         .attr("y2", d => linkGeometry(d).y2);
+      selfLoop
+        .attr("d", d => linkGeometry(d).path);
       edgeLabel
         .attr("x", d => linkGeometry(d).labelX)
         .attr("y", d => linkGeometry(d).labelY)
@@ -999,11 +1035,32 @@ def graph_to_static_svg(
             margin + (1.0 - (float(y) + 1.0) / 2.0) * usable_height,
         )
 
-    def edge_geometry(link: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
+    def edge_geometry(link: dict[str, Any]) -> dict[str, Any]:
         source = node_lookup[str(link["source"])]
         target = node_lookup[str(link["target"])]
         x1, y1 = point(source)
         x2, y2 = point(target)
+        if source == target:
+            radius = max(34.0, min(86.0, len(str(link.get("label", ""))) * 1.6))
+            count = int(link.get("parallel_count", 1))
+            index = int(link.get("parallel_index", 0))
+            vertical_offset = (index - (count - 1) / 2) * 32.0
+            y = y1 + vertical_offset
+            start_x = x1 + 10.0
+            start_y = y - 8.0
+            end_y = y + 8.0
+            control_x = x1 + radius + 30.0
+            return {
+                "self_loop": True,
+                "path": (
+                    f"M{start_x:.2f},{start_y:.2f} "
+                    f"C{control_x:.2f},{y - radius:.2f} "
+                    f"{control_x:.2f},{y + radius:.2f} "
+                    f"{start_x:.2f},{end_y:.2f}"
+                ),
+                "label_x": x1 + radius + 34.0,
+                "label_y": y - radius - 8.0,
+            }
         dx = x2 - x1
         dy = y2 - y1
         length = (dx * dx + dy * dy) ** 0.5 or 1.0
@@ -1014,14 +1071,15 @@ def graph_to_static_svg(
         offset = (index - (count - 1) / 2) * 18.0
         offset_x = normal_x * offset
         offset_y = normal_y * offset
-        return (
-            x1 + offset_x,
-            y1 + offset_y,
-            x2 + offset_x,
-            y2 + offset_y,
-            (x1 + x2) / 2 + offset_x,
-            (y1 + y2) / 2 + offset_y,
-        )
+        return {
+            "self_loop": False,
+            "x1": x1 + offset_x,
+            "y1": y1 + offset_y,
+            "x2": x2 + offset_x,
+            "y2": y2 + offset_y,
+            "label_x": (x1 + x2) / 2 + offset_x,
+            "label_y": (y1 + y2) / 2 + offset_y,
+        }
 
     def xml_text(value: Any) -> str:
         return escape(str(value), quote=True)
@@ -1067,7 +1125,7 @@ def graph_to_static_svg(
         target = node_lookup.get(str(link["target"]))
         if source is None or target is None:
             continue
-        x1, y1, x2, y2, label_x, label_y = edge_geometry(link)
+        geometry = edge_geometry(link)
         category = link.get("category", "semantic")
         stroke = {"causal": "#c2410c", "temporal": "#2563eb"}.get(category, "#9aa0a6")
         stroke_width = {"causal": 2.5, "temporal": 1.5}.get(category, 1)
@@ -1077,15 +1135,22 @@ def graph_to_static_svg(
             "temporal": "semantic-graphicalizer-temporal-arrow",
         }.get(category, "semantic-graphicalizer-arrow")
         marker = f' marker-end="url(#{marker_id})"' if graph.is_directed() else ""
-        elements.append(
-            f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
-            f'stroke="{stroke}" stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
-        )
+        if geometry["self_loop"]:
+            elements.append(
+                f'<path d="{geometry["path"]}" fill="none" stroke="{stroke}" '
+                f'stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
+            )
+        else:
+            elements.append(
+                f'<line x1="{geometry["x1"]:.2f}" y1="{geometry["y1"]:.2f}" '
+                f'x2="{geometry["x2"]:.2f}" y2="{geometry["y2"]:.2f}" '
+                f'stroke="{stroke}" stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
+            )
         label = link["label"]
         if label:
             elements.append(svg_label(
-                label_x,
-                label_y - 4,
+                geometry["label_x"],
+                geometry["label_y"] - 4,
                 label,
                 font_size=11,
                 attributes=f'fill="{stroke}" text-anchor="middle" font-family="sans-serif"',

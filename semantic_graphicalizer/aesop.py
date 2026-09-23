@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 from pathlib import Path
+import random
 import re
 from urllib.request import Request, urlopen
 
@@ -67,8 +68,15 @@ def load_aesop_fables(
     cache_dir: str | Path = DEFAULT_AESOP_CACHE_DIR,
     refresh: bool = False,
     url: str = AESOP_GUTENBERG_URL,
+    select_at_random: bool = False,
+    rand_seed: int | None = None,
 ) -> list[str]:
-    """Return the first ``limit`` Aesop stories as complete document strings.
+    """Return up to ``limit`` Aesop stories as complete document strings.
+
+    By default, stories are returned in source order. Set
+    ``select_at_random=True`` to sample the requested number from the complete
+    cached collection. ``rand_seed`` makes that sample reproducible; ``None``
+    uses the standard nondeterministic random seed.
 
     The parsed stories are cached in ``cache_dir/aesop_fables.json``. The raw
     Gutenberg source is cached in ``cache_dir/pg53103.txt`` and is downloaded
@@ -77,8 +85,18 @@ def load_aesop_fables(
 
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("limit must be a positive integer")
+    if not isinstance(select_at_random, bool):
+        raise ValueError("select_at_random must be a boolean")
+    if rand_seed is not None and (not isinstance(rand_seed, int) or isinstance(rand_seed, bool)):
+        raise ValueError("rand_seed must be an integer or None")
     if not isinstance(url, str) or not url.strip():
         raise ValueError("url must be a non-empty string")
+
+    def select_stories(stories: list[str]) -> list[str]:
+        if not select_at_random:
+            return stories[:limit]
+        sampler = random.Random(rand_seed)
+        return sampler.sample(stories, k=min(limit, len(stories)))
 
     cache_path = Path(cache_dir) / DEFAULT_AESOP_CACHE_FILE
     stories_cache_path = Path(cache_dir) / DEFAULT_AESOP_STORIES_CACHE_FILE
@@ -87,7 +105,7 @@ def load_aesop_fables(
     if not refresh:
         cached_stories = _read_story_cache(stories_cache_path)
         if cached_stories is not None:
-            return cached_stories[:limit]
+            return select_stories(cached_stories)
 
     if refresh or not cache_path.exists():
         book_text = _download_text(url, cache_path)
@@ -98,7 +116,7 @@ def load_aesop_fables(
         json.dumps(stories, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    return stories[:limit]
+    return select_stories(stories)
 
 
 __all__ = [

@@ -150,6 +150,21 @@ def test_parallel_labels_receive_separate_offsets() -> None:
     assert "linkGeometry(d).labelX" in html
 
 
+def test_self_loop_uses_offset_arc_and_label_anchor() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", label="Animal", mentions=["fox"])
+    graph.add_edge("fox", "fox", predicate="interacts_with", label="The fox interacts with itself.")
+
+    html = graph_to_d3_html(graph)
+    svg = graph_to_static_svg(graph)
+    assert "const isSelfLoop = d =>" in html
+    assert ".data(data.links.filter(isSelfLoop))" in html
+    assert "selfLoop" in html
+    assert "C" in svg
+    assert "<path" in svg
+    assert "interacts_with" in svg
+
+
 def test_d3_data_exposes_reified_entity_and_argument_categories() -> None:
     graph = nx.MultiDiGraph()
     graph.add_node(

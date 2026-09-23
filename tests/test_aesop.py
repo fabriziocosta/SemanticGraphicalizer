@@ -29,7 +29,9 @@ separate document. It also ends with a clear lesson.
                          THE THIRD FABLE
 
 The third story is not selected when the requested subset is two stories. It is
-included to prove that the loader stops after the requested number.
+included to prove that the loader stops after the requested number. The tale
+continues with enough descriptive text, a meaningful response to the problem,
+and a concluding lesson so it is also available to random subset selection.
 
 *** END OF THE PROJECT GUTENBERG EBOOK AESOP'S FABLES ***"""
 
@@ -90,3 +92,37 @@ def test_loader_refreshes_cache(tmp_path, monkeypatch) -> None:
 def test_loader_rejects_invalid_limit(tmp_path) -> None:
     with pytest.raises(ValueError, match="positive integer"):
         load_aesop_fables(limit=0, cache_dir=tmp_path)
+
+
+def test_loader_can_select_a_reproducible_random_subset(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "semantic_graphicalizer.aesop.urlopen",
+        lambda request, timeout: FakeResponse(gutenberg_fixture()),
+    )
+
+    first = load_aesop_fables(
+        limit=2,
+        cache_dir=tmp_path,
+        select_at_random=True,
+        rand_seed=0,
+    )
+    second = load_aesop_fables(
+        limit=2,
+        cache_dir=tmp_path,
+        select_at_random=True,
+        rand_seed=0,
+    )
+
+    assert first == second
+    assert len(first) == 2
+    assert {story.splitlines()[0] for story in first} != {
+        "THE FIRST FABLE",
+        "THE SECOND FABLE",
+    }
+
+
+def test_loader_rejects_invalid_random_selection_options(tmp_path) -> None:
+    with pytest.raises(ValueError, match="select_at_random"):
+        load_aesop_fables(select_at_random="yes", cache_dir=tmp_path)
+    with pytest.raises(ValueError, match="rand_seed"):
+        load_aesop_fables(rand_seed=True, cache_dir=tmp_path)
