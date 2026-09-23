@@ -346,7 +346,7 @@ def graph_to_d3_data(
 
     def node_primary(data: dict[str, Any], fallback: Any) -> Any:
         if data.get("relation") is not None:
-            return f"{data.get('type', fallback)} [{data['relation']}]"
+            return f"{data.get('type', fallback)} : {data['relation']}"
         return data.get(node_label_attr, fallback)
 
     def node_source(data: dict[str, Any]) -> str:
@@ -447,6 +447,7 @@ def graph_to_d3_html(
     show_derived_links: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
+    parallel_edge_spacing: float = 48,
     component_spacing: float = 180,
     component_strength: float = 0.25,
     timeline_stiffness: float = 0.95,
@@ -461,6 +462,9 @@ def graph_to_d3_html(
         raise ValueError("d3_url must be a non-empty string")
     charge_strength = _validate_charge_strength(charge_strength)
     link_distance = _validate_positive_number(link_distance, "link_distance")
+    parallel_edge_spacing = _validate_positive_number(
+        parallel_edge_spacing, "parallel_edge_spacing"
+    )
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
     timeline_stiffness = _validate_stiffness(timeline_stiffness)
@@ -486,6 +490,7 @@ def graph_to_d3_html(
         height_json=height_json,
         charge_strength=charge_strength,
         link_distance=link_distance,
+        parallel_edge_spacing=parallel_edge_spacing,
         component_spacing=component_spacing,
         component_strength=component_strength,
         timeline_stiffness=timeline_stiffness,
@@ -506,6 +511,7 @@ def _d3_script(
     height_json: str,
     charge_strength: float,
     link_distance: float,
+    parallel_edge_spacing: float,
     component_spacing: float,
     component_strength: float,
     timeline_stiffness: float,
@@ -520,6 +526,7 @@ def _d3_script(
   const width = {width_json};
   const height = {height_json};
   const linkDistance = {link_distance};
+  const parallelEdgeSpacing = {parallel_edge_spacing};
   const requestedComponentSpacing = {component_spacing};
   const componentStrength = {component_strength};
   const timelineStiffness = {timeline_stiffness};
@@ -609,9 +616,10 @@ def _d3_script(
 
   const link = viewport.append("g")
     .attr("aria-hidden", "true")
-    .selectAll("line")
+    .selectAll("path")
     .data(data.links)
-    .join("line")
+    .join("path")
+    .attr("fill", "none")
     .attr("stroke", d => d.category === "causal" ? "#c2410c" : d.category === "temporal" ? "#2563eb" : "#9aa0a6")
     .attr("stroke-width", d => d.category === "causal" ? 2.5 : d.category === "temporal" ? 1.5 : 1)
     .attr("stroke-opacity", 0.85)
@@ -651,7 +659,7 @@ def _d3_script(
   const edgeOffset = d => {{
     const count = Number(d.parallel_count || 1);
     const index = Number(d.parallel_index || 0);
-    return (index - (count - 1) / 2) * 18;
+    return (index - (count - 1) / 2) * parallelEdgeSpacing;
   }};
   const linkGeometry = d => {{
     if (isSelfLoop(d)) {{
@@ -675,14 +683,18 @@ def _d3_script(
     const length = Math.sqrt(dx * dx + dy * dy) || 1;
     const normalX = -dy / length;
     const normalY = dx / length;
-    const offset = edgeOffset(d);
+    const count = Number(d.parallel_count || 1);
+    const index = Number(d.parallel_index || 0);
+    const parallelCurvature = count > 1
+      ? (index - (count - 1) / 2) * parallelEdgeSpacing
+      : 0;
+    const controlX = (d.source.x + d.target.x) / 2 + normalX * parallelCurvature;
+    const controlY = (d.source.y + d.target.y) / 2 + normalY * parallelCurvature;
     return {{
-      x1: d.source.x + normalX * offset,
-      y1: d.source.y + normalY * offset,
-      x2: d.target.x + normalX * offset,
-      y2: d.target.y + normalY * offset,
-      labelX: (d.source.x + d.target.x) / 2 + normalX * offset,
-      labelY: (d.source.y + d.target.y) / 2 + normalY * offset,
+      selfLoop: false,
+      path: `M${{d.source.x}},${{d.source.y}} Q${{controlX}},${{controlY}} ${{d.target.x}},${{d.target.y}}`,
+      labelX: (d.source.x + 2 * controlX + d.target.x) / 4,
+      labelY: (d.source.y + 2 * controlY + d.target.y) / 4,
     }};
   }};
   const edgeDistance = d => {{
@@ -783,10 +795,7 @@ def _d3_script(
         }});
       }}
       link
-        .attr("x1", d => linkGeometry(d).x1)
-        .attr("y1", d => linkGeometry(d).y1)
-        .attr("x2", d => linkGeometry(d).x2)
-        .attr("y2", d => linkGeometry(d).y2);
+        .attr("d", d => linkGeometry(d).path);
       selfLoop
         .attr("d", d => linkGeometry(d).path);
       edgeLabel
@@ -818,6 +827,7 @@ def graph_to_d3_javascript(
     show_derived_links: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
+    parallel_edge_spacing: float = 48,
     component_spacing: float = 180,
     component_strength: float = 0.25,
     timeline_stiffness: float = 0.95,
@@ -829,6 +839,9 @@ def graph_to_d3_javascript(
         raise ValueError("width and height must be positive")
     charge_strength = _validate_charge_strength(charge_strength)
     link_distance = _validate_positive_number(link_distance, "link_distance")
+    parallel_edge_spacing = _validate_positive_number(
+        parallel_edge_spacing, "parallel_edge_spacing"
+    )
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
     timeline_stiffness = _validate_stiffness(timeline_stiffness)
@@ -851,6 +864,7 @@ def graph_to_d3_javascript(
         height_json=json.dumps(int(height)),
         charge_strength=charge_strength,
         link_distance=link_distance,
+        parallel_edge_spacing=parallel_edge_spacing,
         component_spacing=component_spacing,
         component_strength=component_strength,
         timeline_stiffness=timeline_stiffness,
@@ -878,6 +892,7 @@ def graph_to_d3_iframe(
     show_derived_links: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
+    parallel_edge_spacing: float = 48,
     component_spacing: float = 180,
     component_strength: float = 0.25,
     timeline_stiffness: float = 0.95,
@@ -892,6 +907,9 @@ def graph_to_d3_iframe(
         raise ValueError("d3_url must be a non-empty string")
     charge_strength = _validate_charge_strength(charge_strength)
     link_distance = _validate_positive_number(link_distance, "link_distance")
+    parallel_edge_spacing = _validate_positive_number(
+        parallel_edge_spacing, "parallel_edge_spacing"
+    )
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
     timeline_stiffness = _validate_stiffness(timeline_stiffness)
@@ -908,6 +926,7 @@ def graph_to_d3_iframe(
         show_derived_links=show_derived_links,
         charge_strength=charge_strength,
         link_distance=link_distance,
+        parallel_edge_spacing=parallel_edge_spacing,
         component_spacing=component_spacing,
         component_strength=component_strength,
         timeline_stiffness=timeline_stiffness,
@@ -933,6 +952,7 @@ def _graph_to_d3_document(
     show_derived_links: bool,
     charge_strength: float,
     link_distance: float,
+    parallel_edge_spacing: float,
     component_spacing: float,
     component_strength: float,
     timeline_stiffness: float,
@@ -955,6 +975,7 @@ def _graph_to_d3_document(
     show_derived_links=show_derived_links,
     charge_strength=charge_strength,
     link_distance=link_distance,
+    parallel_edge_spacing=parallel_edge_spacing,
     component_spacing=component_spacing,
     component_strength=component_strength,
     timeline_stiffness=timeline_stiffness,
@@ -974,12 +995,16 @@ def graph_to_static_svg(
     show_source: bool = True,
     max_width: int = 80,
     show_derived_links: bool = True,
+    parallel_edge_spacing: float = 48,
     layout: str = "auto",
 ) -> str:
     """Return a deterministic SVG using timeline or Kamada-Kawai layout."""
 
     if width < 1 or height < 1:
         raise ValueError("width and height must be positive")
+    parallel_edge_spacing = _validate_positive_number(
+        parallel_edge_spacing, "parallel_edge_spacing"
+    )
     layout = _validate_layout(layout)
 
     graph = _graph_from_value(value)
@@ -1044,7 +1069,7 @@ def graph_to_static_svg(
             radius = max(34.0, min(86.0, len(str(link.get("label", ""))) * 1.6))
             count = int(link.get("parallel_count", 1))
             index = int(link.get("parallel_index", 0))
-            vertical_offset = (index - (count - 1) / 2) * 32.0
+            vertical_offset = (index - (count - 1) / 2) * parallel_edge_spacing
             y = y1 + vertical_offset
             start_x = x1 + 10.0
             start_y = y - 8.0
@@ -1068,17 +1093,21 @@ def graph_to_static_svg(
         normal_y = dx / length
         count = int(link.get("parallel_count", 1))
         index = int(link.get("parallel_index", 0))
-        offset = (index - (count - 1) / 2) * 18.0
-        offset_x = normal_x * offset
-        offset_y = normal_y * offset
+        parallel_curvature = (
+            (index - (count - 1) / 2) * parallel_edge_spacing
+            if count > 1
+            else 0.0
+        )
+        control_x = (x1 + x2) / 2 + normal_x * parallel_curvature
+        control_y = (y1 + y2) / 2 + normal_y * parallel_curvature
         return {
             "self_loop": False,
-            "x1": x1 + offset_x,
-            "y1": y1 + offset_y,
-            "x2": x2 + offset_x,
-            "y2": y2 + offset_y,
-            "label_x": (x1 + x2) / 2 + offset_x,
-            "label_y": (y1 + y2) / 2 + offset_y,
+            "path": (
+                f"M{x1:.2f},{y1:.2f} Q{control_x:.2f},{control_y:.2f} "
+                f"{x2:.2f},{y2:.2f}"
+            ),
+            "label_x": (x1 + 2 * control_x + x2) / 4,
+            "label_y": (y1 + 2 * control_y + y2) / 4,
         }
 
     def xml_text(value: Any) -> str:
@@ -1142,9 +1171,8 @@ def graph_to_static_svg(
             )
         else:
             elements.append(
-                f'<line x1="{geometry["x1"]:.2f}" y1="{geometry["y1"]:.2f}" '
-                f'x2="{geometry["x2"]:.2f}" y2="{geometry["y2"]:.2f}" '
-                f'stroke="{stroke}" stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
+                f'<path d="{geometry["path"]}" fill="none" stroke="{stroke}" '
+                f'stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
             )
         label = link["label"]
         if label:
@@ -1240,6 +1268,7 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         show_derived_links=kwargs.get("show_derived_links", True),
         charge_strength=kwargs.get("charge_strength", -180),
         link_distance=kwargs.get("link_distance", 90),
+        parallel_edge_spacing=kwargs.get("parallel_edge_spacing", 48),
         component_spacing=kwargs.get("component_spacing", 180),
         component_strength=kwargs.get("component_strength", 0.25),
         timeline_stiffness=kwargs.get("timeline_stiffness", 0.95),

@@ -150,6 +150,44 @@ def test_parallel_labels_receive_separate_offsets() -> None:
     assert "linkGeometry(d).labelX" in html
 
 
+def test_parallel_edges_use_curved_paths() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("source", label="Source")
+    graph.add_node("target", label="Target")
+    graph.add_edge("source", "target", predicate="causes", label="first")
+    graph.add_edge("source", "target", predicate="before", label="second")
+
+    html = graph_to_d3_html(graph)
+    svg = graph_to_static_svg(graph)
+
+    assert "const parallelCurvature = count > 1" in html
+    assert '.attr("d", d => linkGeometry(d).path)' in html
+    assert " Q" in svg
+
+
+def test_parallel_edge_spacing_is_exposed_across_renderers() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("source", label="Source")
+    graph.add_node("target", label="Target")
+    graph.add_edge("source", "target", predicate="causes", label="first")
+    graph.add_edge("source", "target", predicate="before", label="second")
+
+    html = graph_to_d3_html(graph, parallel_edge_spacing=72)
+    javascript = graph_to_d3_javascript(graph, parallel_edge_spacing=72)
+    iframe = graph_to_d3_iframe(graph, parallel_edge_spacing=72)
+    narrow_svg = graph_to_static_svg(graph, parallel_edge_spacing=24)
+    wide_svg = graph_to_static_svg(graph, parallel_edge_spacing=72)
+
+    assert "const parallelEdgeSpacing = 72.0;" in html
+    assert "const parallelEdgeSpacing = 72.0;" in javascript
+    assert "parallelEdgeSpacing" in iframe
+    assert narrow_svg != wide_svg
+    with pytest.raises(ValueError, match="parallel_edge_spacing"):
+        graph_to_d3_html(graph, parallel_edge_spacing=0)
+    with pytest.raises(ValueError, match="parallel_edge_spacing"):
+        graph_to_static_svg(graph, parallel_edge_spacing=0)
+
+
 def test_self_loop_uses_offset_arc_and_label_anchor() -> None:
     graph = nx.MultiDiGraph()
     graph.add_node("fox", label="Animal", mentions=["fox"])
@@ -196,7 +234,7 @@ def test_d3_data_exposes_reified_entity_and_argument_categories() -> None:
     data = graph_to_d3_data(graph)
 
     assert data["nodes"][0]["node_type"] == "entity"
-    assert "event [causes]" in data["nodes"][0]["label"]
+    assert "event : causes" in data["nodes"][0]["label"]
     assert data["links"][0]["predicate"] == "effect"
     assert data["links"][0]["edge_type"] == "argument"
 
@@ -208,7 +246,7 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     html = graph_to_d3_html(graph)
 
     assert "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" in html
-    assert '.selectAll("line")' in html
+    assert '.selectAll("path")' in html
     assert '.selectAll("text")' in html
     assert 'attr("stroke", d => d.category === "causal"' in html
     assert 'attr("stroke-width", d => d.category === "causal"' in html
