@@ -1,14 +1,11 @@
 domain: aesop-narrative
-version: "1.0"
+version: "2.0"
 stages:
   summarize:
     system: >-
-      You summarize fables while preserving characters, actions, goals,
-      consequences, and explicit or implied morals.
+      You summarize narrative text while preserving every entity, event,
+      state, assertion, qualification, and source distinction.
     instruction: |
-      Use the ontology below as weak guidance. Preserve every graph-relevant
-      event and qualification, but do not invent ontology entities.
-
       Ontology:
       {ontology}
 
@@ -17,12 +14,9 @@ stages:
     output: Return JSON with one non-empty string field named summary.
   normalize:
     system: >-
-      You rewrite narrative summaries using the supplied ontology terms while
-      preserving the original meaning and uncertainty.
+      You normalize a summary into precise ontology-aligned prose without
+      inventing entities or relations.
     instruction: |
-      Normalize the summary into clear ontology-aligned prose. Keep distinct
-      characters and actions distinct.
-
       Ontology:
       {ontology}
 
@@ -31,10 +25,10 @@ stages:
     output: Return JSON with one non-empty string field named normalized.
   decompose:
     system: >-
-      You split normalized narrative text into atomic propositions.
+      You decompose normalized text into source-grounded semantic assertions.
     instruction: |
-      Each proposition must express one claim. Preserve negation, attribution,
-      uncertainty, and moral qualifications. Use the ontology as guidance.
+      Each assertion must express one claim and preserve modality, negation,
+      attribution, qualification, and source wording.
 
       Ontology:
       {ontology}
@@ -42,49 +36,42 @@ stages:
       Normalized text:
       {text}
     output: >-
-      Return JSON with a propositions list. Each item must contain text and may
-      contain id, source_text, confidence, and qualification.
-  triple:
+      Return JSON with an assertions list. Every item must contain id, text,
+      source_text, and an attributes object.
+  extract:
     system: >-
-      You map atomic propositions to ontology-constrained entity triples.
+      You extract atomic Entities and reified relation instances with named
+      arguments from the assertions.
     instruction: |
-      Return one or more triples for the propositions below. Use exact ontology
-      relation IDs. Entity labels must be ontology term IDs, and a proposition
-      edge label should preserve the complete claim rather than only a verb.
-      For every triple, obey the relation's source and target constraints
-      exactly: the subject label must be in its source list and the object
-      label must be in its target list. Never use a generic label such as
-      Animal when the selected relation requires a more specific target term.
+      Use only configured Entity types, relation types, and argument roles.
+      Every relation argument entity_id must reference an entity or relation
+      id in this response. Relations may reference other relations.
+      Do not infer relations unsupported by the source assertions.
 
       Ontology:
       {ontology}
 
-      Atomic propositions:
+      Assertions:
       {text}
     output: >-
-      Return JSON with a triples list. Each item must contain id,
-      proposition_id, subject {mention, label, optional key}, predicate,
-      object {mention, label, optional key}, and optional proposition,
-      confidence, and qualification.
-  link:
+      Return JSON with entities and relations lists. Entity items contain id,
+      type, mention, key, and attributes. Relation items contain id, type,
+      relation, arguments [{role, entity_id, attributes}], and attributes.
+  resolve:
     system: >-
-      You identify explicit temporal and causal relationships between atomic
-      propositions and identify the temporal extent of narrative states.
+      You identify only explicit cross-chunk or higher-order relations that
+      are supported by the document and reference known graph objects.
     instruction: |
-      Use only proposition IDs provided below. Return a link only when the
-      source text explicitly supports the configured temporal or causal
-      relation. Do not infer causality merely because one proposition follows
-      another. Narrative order is added separately by the program.
+      Use configured relation schemas and argument roles. Known IDs include
+      atomic entities and already extracted relation entities. Every argument
+      must reference a known ID. Return no relation when the text does not
+      support it.
 
       Ontology:
       {ontology}
 
-      Atomic propositions:
+      Existing graph objects:
       {text}
     output: >-
-      Return JSON with a links list and a state_intervals list. Each link must
-      contain source_proposition_id, target_proposition_id, predicate,
-      confidence, and qualification. Each state interval must contain
-      state_proposition_id and optional starts_at and ends_at proposition IDs.
-      Boundary IDs must refer to event propositions; return null when no event
-      boundary can be identified.
+      Return JSON with a relations list. Each relation contains id, type,
+      relation, arguments, and attributes.

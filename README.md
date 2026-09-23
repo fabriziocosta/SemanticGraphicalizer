@@ -23,18 +23,18 @@ export OPENAI_API_KEY="your_api_key_here"
 
 Pass `model=...` to inject a fake client for tests or another provider.
 
-Nodes store the ontology term in `node["label"]`. Nodes and edges also carry
-`document_id` and the original `document_text`; chunk-level excerpts remain in
-their provenance fields. Edges store the complete proposition in
-`edge["label"]`, while `edge["predicate"]` contains the ontology relation ID.
-The unified graph also reifies propositions as `node_type="proposition"` nodes
-with `proposition_kind` (`event`, `state`, or `statement`) and document-order
-`sequence` values. Entity participation, narrative temporal links, and
-explicit causal links are represented as typed edges. The legacy entity-only
-projection is available as `DocumentTrace.semantic_graph`.
-`transform_with_trace` exposes all intermediate stages, links, state intervals,
-and provenance. State intervals may have one or both temporal boundaries
-unresolved; only identified `starts_at` and `ends_at` edges are materialized.
+Every semantic object is an Entity node. Atomic nodes have `relation=None`;
+reified relation nodes have a configured `relation` and outgoing
+`edge_type="argument"` edges labelled by `role`. Node `type`, `relation`, and
+the complete `attributes` mapping are preserved alongside document metadata
+and provenance. Relation nodes can point to other relation nodes, so causal,
+temporal, evidential, logical, state, and measurement assertions use the same
+graph mechanism. `transform_with_trace` exposes extracted `entities`,
+`relations`, stage statistics, and the canonical graph.
+
+Use `project_binary_relations(graph, ontology)` for an explicit, schema-driven
+direct-edge view. Use `graph_to_dict` and `graph_from_dict` for JSON-safe
+round-trip serialization.
 Document IDs are stable content-derived IDs by default; pass
 `document_id_fn=(text, index) -> str` when an external identifier is available.
 Node and edge provenance includes source spans when the model's source text can
@@ -86,25 +86,17 @@ graphicalizer.display(
 )
 ```
 
-`timeline_stiffness` ranges from `0` to `1`. Higher values pull event nodes
-more strongly onto their sequence positions and common horizontal timeline;
-`1.0` produces the stiffest event rail while states, statements, and entities
-remain movable around it.
+`timeline_stiffness` remains available for compatibility with manually
+annotated timeline graphs. Reified graphs default to the force layout; use
+`layout="force"` or `layout="timeline"` explicitly when desired.
 
-Dynamic and static rendering automatically use a timeline layout for unified
-graphs. Use `layout="force"` to request the legacy force/Kamada-Kawai layout,
-or `layout="timeline"` to force the narrative layout.
+Text mode prints relation nodes with their type and relation, followed by
+indented argument-role and target lines. Dynamic and static renderers show
+Entity types, relation names, argument roles, and source mentions.
 
-Text mode prints each node with outgoing relations as `Ontology: surface text`,
-followed by indented `relation: TargetOntology: target text` lines. Target-only
-nodes are shown inline and are not repeated as separate headings. Dynamic and
-static renderers show ontology terms and predicates in lowercase monospace;
-source mentions and proposition fragments retain their original typography.
-
-The default view shows both values: ontology IDs plus surface mentions on
-text-only nodes, and ontology relation IDs plus proposition fragments on thin
-gray edges. Use `show_source=False` to display only ontology IDs and relation
-IDs.
+The default view shows ontology values plus source mentions. Use
+`show_source=False` to display only ontology IDs, relation names, and argument
+roles.
 
 Progress reporting is enabled by default. Set `verbose=False` to suppress it;
 stage timings and counts remain available on each `DocumentTrace.stats` item

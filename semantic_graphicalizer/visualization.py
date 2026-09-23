@@ -118,7 +118,10 @@ def graph_to_text(
         elif graph.degree(node_id) == 0:
             continue
 
-        node_label = _ontology_text(data.get(node_label_attr, node_id))
+        node_label_value = data.get(node_label_attr, node_id)
+        if data.get("relation") is not None:
+            node_label_value = f"{data.get('type', node_label_value)} [{data['relation']}]"
+        node_label = _ontology_text(node_label_value)
         mentions = data.get("mentions")
         if isinstance(mentions, (list, tuple)):
             surface_text = "; ".join(str(mention) for mention in mentions if mention)
@@ -140,7 +143,7 @@ def graph_to_text(
                 for source_id, target_id, relation_data in graph.edges(node_id, data=True)
             ]
         for target_id, relation_data in relation_items:
-            predicate_value = relation_data.get("predicate")
+            predicate_value = relation_data.get("role", relation_data.get("predicate"))
             predicate = (
                 _ontology_text(predicate_value)
                 if predicate_value
@@ -183,6 +186,11 @@ def graph_to_d3_data(
             return primary_text
         return f"{primary_text}\n{source_text}"
 
+    def node_primary(data: dict[str, Any], fallback: Any) -> Any:
+        if data.get("relation") is not None:
+            return f"{data.get('type', fallback)} [{data['relation']}]"
+        return data.get(node_label_attr, fallback)
+
     def node_source(data: dict[str, Any]) -> str:
         mentions = data.get("mentions")
         if isinstance(mentions, (list, tuple)):
@@ -207,11 +215,10 @@ def graph_to_d3_data(
     nodes = [
         {
             "id": str(node_id),
-            "label": combined_label(data.get(node_label_attr, node_id), node_source(data)),
-            "ontology_label": _ontology_text(data.get(node_label_attr, node_id)),
+            "label": combined_label(node_primary(data, node_id), node_source(data)),
+            "ontology_label": _ontology_text(node_primary(data, node_id)),
             "source_fragment": node_source(data),
-            "node_type": str(data.get("node_type", "entity")),
-            "proposition_kind": data.get("proposition_kind"),
+            "node_type": str(data.get("node_type", "relation" if data.get("relation") is not None else "entity")),
             "sequence": sequence_by_node[node_id],
             "component_order": component_info[node_id][0],
             "component_index": component_info[node_id][1],
@@ -225,8 +232,8 @@ def graph_to_d3_data(
             {
                 "source": str(source),
                 "target": str(target),
-                "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
-                "predicate": _ontology_text(data.get("predicate", "")),
+                "label": combined_label(data.get("role", data.get("predicate", "")), data.get(edge_label_attr, "")),
+                "predicate": _ontology_text(data.get("role", data.get("predicate", ""))),
                 "source_fragment": str(data.get(edge_label_attr, "")),
                 "edge_type": str(data.get("edge_type", "semantic")),
                 "category": str(data.get("category", "semantic")),
@@ -239,8 +246,8 @@ def graph_to_d3_data(
             {
                 "source": str(source),
                 "target": str(target),
-                "label": combined_label(data.get("predicate", ""), data.get(edge_label_attr, "")),
-                "predicate": _ontology_text(data.get("predicate", "")),
+                "label": combined_label(data.get("role", data.get("predicate", "")), data.get(edge_label_attr, "")),
+                "predicate": _ontology_text(data.get("role", data.get("predicate", ""))),
                 "source_fragment": str(data.get(edge_label_attr, "")),
                 "edge_type": str(data.get("edge_type", "semantic")),
                 "category": str(data.get("category", "semantic")),
@@ -461,10 +468,8 @@ def _d3_script(
       * Math.min(140, width / Math.max(2 * componentValues.length, 1));
     return center + local;
   }};
-  const propositionNodes = data.nodes.filter(d => d.node_type === "proposition");
-  const sequenceValues = [...new Set(propositionNodes.map(d => d.sequence))].sort((a, b) => a - b);
-  const hasPropositions = propositionNodes.length > 0;
-  const useTimeline = layoutMode === "timeline" || (layoutMode === "auto" && hasPropositions);
+  const sequenceValues = [...new Set(data.nodes.map(d => d.sequence))].sort((a, b) => a - b);
+  const useTimeline = layoutMode === "timeline";
   const hardTimeline = useTimeline && timelineStiffness >= 0.999;
   const timelineY = height * 0.52;
   const timelineScale = d3.scalePoint()
@@ -472,20 +477,10 @@ def _d3_script(
     .range([80, Math.max(80, width - 80)])
     .padding(0.35);
   const timelineX = d => timelineScale(d.sequence) ?? width / 2;
-  const timelineYTarget = d => {{
-    if (d.node_type !== "proposition") return height / 2;
-    if (d.proposition_kind === "state") return timelineY - 150;
-    if (d.proposition_kind === "statement") return timelineY + 150;
-    return timelineY;
-  }};
-  const isTimelineEvent = d => d.node_type === "proposition" && d.proposition_kind === "event";
+  const timelineYTarget = d => timelineY;
   const xTarget = d => useTimeline ? timelineX(d) : componentTarget(d);
-  const xStrength = d => useTimeline
-    ? (isTimelineEvent(d) ? timelineStiffness : d.node_type === "proposition" ? Math.min(0.25, timelineStiffness * 0.25) : 0.08)
-    : componentStrength;
-  const yStrength = d => useTimeline
-    ? (isTimelineEvent(d) ? timelineStiffness : d.node_type === "proposition" ? Math.min(0.25, timelineStiffness * 0.25) : 0.08)
-    : 0;
+  const xStrength = d => useTimeline ? timelineStiffness : componentStrength;
+  const yStrength = d => useTimeline ? timelineStiffness : 0;
   const linkStrength = d => d.category === "temporal"
     ? 0.35 + 0.65 * timelineStiffness
     : d.category === "causal" ? 0.55 : 0.65;
@@ -536,7 +531,7 @@ def _d3_script(
     .on("tick", () => {{
       if (hardTimeline) {{
         data.nodes.forEach(d => {{
-          if (isTimelineEvent(d) && !d.pinned) {{
+          if (!d.pinned) {{
             d.x = timelineX(d);
             d.y = timelineY;
             d.vx = 0;
@@ -747,10 +742,7 @@ def graph_to_static_svg(
     positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
     display_nodes = {item["id"]: item for item in display_data["nodes"]}
     display_links = display_data["links"]
-    use_timeline = layout == "timeline" or (
-        layout == "auto"
-        and any(item["node_type"] == "proposition" for item in display_data["nodes"])
-    )
+    use_timeline = layout == "timeline"
     component_count = max(
         (int(item["component_order"]) for item in display_data["nodes"]),
         default=-1,
@@ -758,26 +750,17 @@ def graph_to_static_svg(
     margin = 48
     usable_width = max(width - 2 * margin, 1)
     usable_height = max(height - 2 * margin, 1)
-    proposition_sequences = sorted(
-        item["sequence"]
-        for item in display_data["nodes"]
-        if item["node_type"] == "proposition"
-    )
+    sequence_values = sorted(item["sequence"] for item in display_data["nodes"])
 
     def point(node_id: Any) -> tuple[float, float]:
         node_data = display_nodes[str(node_id)]
-        if use_timeline and node_data["node_type"] == "proposition":
-            sequence_index = proposition_sequences.index(node_data["sequence"])
+        if use_timeline:
+            sequence_index = sequence_values.index(node_data["sequence"])
             x = margin + (
-                sequence_index / max(len(proposition_sequences) - 1, 1)
+                sequence_index / max(len(sequence_values) - 1, 1)
             ) * usable_width
             timeline_y = margin + usable_height * 0.52
-            kind_offset = {
-                "event": 0,
-                "state": -120,
-                "statement": 120,
-            }.get(node_data.get("proposition_kind"), 0)
-            return x, timeline_y + kind_offset
+            return x, timeline_y
         x, y = positions[node_id]
         band_width = usable_width / max(component_count, 1)
         slots = max(1, int(node_data["component_size"]) - 1)
@@ -896,7 +879,7 @@ def graph_to_static_svg(
         f'viewBox="0 0 {int(width)} {int(height)}" role="img" aria-label="Ontology graph">'
         '<title>Ontology graph</title>'
         '<desc>A deterministic narrative or Kamada-Kawai graph with ontology terms and '
-        'surface mentions as text-only nodes, and ontology relation IDs with proposition '
+        'surface mentions as text-only nodes, and argument roles with source '
         'fragments as edge labels.</desc>'
         + "".join(elements)
         + "</svg>"

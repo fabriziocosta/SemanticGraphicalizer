@@ -36,7 +36,6 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
                 "ontology_label": "animal",
                 "source_fragment": "fox",
                 "node_type": "entity",
-                "proposition_kind": None,
                 "sequence": 0,
                 "component_order": 0,
                 "component_index": 0,
@@ -48,7 +47,6 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
                 "ontology_label": "animal",
                 "source_fragment": "crow",
                 "node_type": "entity",
-                "proposition_kind": None,
                 "sequence": 1,
                 "component_order": 0,
                 "component_index": 1,
@@ -68,38 +66,40 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
     }
 
 
-def test_d3_data_exposes_proposition_and_edge_categories() -> None:
+def test_d3_data_exposes_reified_entity_and_argument_categories() -> None:
     graph = nx.MultiDiGraph()
     graph.add_node(
-        "proposition::p1",
-        label="event",
+        "relation::r1",
+        label="Event",
+        type="Event",
+        relation="causes",
         mentions=["The fox runs."],
-        node_type="proposition",
-        proposition_kind="event",
+        node_type="entity",
         sequence=0,
     )
     graph.add_node(
-        "proposition::p2",
-        label="event",
+        "event::p2",
+        label="Event",
+        type="Event",
+        relation=None,
         mentions=["The fox arrives."],
-        node_type="proposition",
-        proposition_kind="event",
+        node_type="entity",
         sequence=1,
     )
     graph.add_edge(
-        "proposition::p1",
-        "proposition::p2",
-        predicate="causes",
-        category="causal",
-        edge_type="causal",
+        "relation::r1",
+        "event::p2",
+        role="effect",
+        category="semantic",
+        edge_type="argument",
     )
 
     data = graph_to_d3_data(graph)
 
-    assert data["nodes"][0]["node_type"] == "proposition"
-    assert data["nodes"][0]["proposition_kind"] == "event"
-    assert data["links"][0]["category"] == "causal"
-    assert data["links"][0]["edge_type"] == "causal"
+    assert data["nodes"][0]["node_type"] == "entity"
+    assert "event [causes]" in data["nodes"][0]["label"]
+    assert data["links"][0]["predicate"] == "effect"
+    assert data["links"][0]["edge_type"] == "argument"
 
 
 def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
@@ -160,7 +160,6 @@ def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
     assert "const hardTimeline = useTimeline && timelineStiffness >= 0.999;" in timeline
     assert "d.x = timelineX(d);" in timeline
     assert "d.y = timelineY;" in timeline
-    assert "isTimelineEvent" in timeline
     with pytest.raises(ValueError, match="timeline_stiffness"):
         graph_to_d3_html(graph, timeline_stiffness=1.1)
     with pytest.raises(ValueError, match="timeline_stiffness"):
@@ -171,35 +170,33 @@ def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
         graph_to_d3_html(graph, link_distance=0)
 
 
-def test_timeline_layout_is_available_and_auto_detects_propositions() -> None:
+def test_timeline_layout_is_explicit_and_type_agnostic() -> None:
     graph = nx.MultiDiGraph()
     graph.add_node(
-        "proposition::p1",
+        "event::p1",
         label="event",
         mentions=["The fox runs."],
-        node_type="proposition",
-        proposition_kind="event",
+        node_type="entity",
         sequence=0,
     )
     graph.add_node(
-        "proposition::p2",
+        "event::p2",
         label="event",
         mentions=["The fox arrives."],
-        node_type="proposition",
-        proposition_kind="event",
+        node_type="entity",
         sequence=1,
     )
     graph.add_edge(
-        "proposition::p1",
-        "proposition::p2",
+        "event::p1",
+        "event::p2",
         predicate="next_in_narrative",
         category="temporal",
         edge_type="temporal",
     )
 
-    html = graph_to_d3_html(graph, layout="auto")
+    html = graph_to_d3_html(graph, layout="timeline")
 
-    assert 'const layoutMode = "auto";' in html
+    assert 'const layoutMode = "timeline";' in html
     assert "const useTimeline = layoutMode === \"timeline\"" in html
     assert "timelineScale" in html
     assert "timelineYTarget" in html

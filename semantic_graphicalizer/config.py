@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,15 +13,9 @@ from .exceptions import ConfigurationError
 
 
 def _mapping(value: Any, name: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ConfigurationError(f"{name} must be a mapping")
-    return value
-
-
-def _required(mapping: dict[str, Any], key: str, name: str) -> Any:
-    if key not in mapping:
-        raise ConfigurationError(f"{name} is missing required field '{key}'")
-    return mapping[key]
+    return dict(value)
 
 
 def _string(value: Any, name: str) -> str:
@@ -35,7 +29,7 @@ def _string_list(value: Any, name: str) -> list[str]:
         return []
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ConfigurationError(f"{name} must be a list of strings")
-    return [item.strip() for item in value]
+    return [_string(item, f"{name}[{index}]") for index, item in enumerate(value)]
 
 
 @dataclass(frozen=True)
@@ -45,18 +39,37 @@ class OntologyTerm:
 
 
 @dataclass(frozen=True)
-class OntologyRelation:
-    id: str
-    description: str
-    source_terms: tuple[str, ...] = ()
-    target_terms: tuple[str, ...] = ()
+class OntologyArgument:
+    role: str
+    cardinality: str = "0..n"
+    allowed_types: tuple[str, ...] = ()
+
+    @property
+    def minimum(self) -> int:
+        return int(self.cardinality.split("..", 1)[0])
+
+    @property
+    def maximum(self) -> int | None:
+        upper = self.cardinality.split("..", 1)[1]
+        return None if upper == "n" else int(upper)
 
 
 @dataclass(frozen=True)
-class OntologyLinkRelation:
+class OntologyRelation:
     id: str
-    category: str
     description: str
+    arguments: tuple[OntologyArgument, ...] = ()
+    projection: tuple[str, str] | None = None
+
+    @property
+    def argument_roles(self) -> tuple[str, ...]:
+        return tuple(argument.role for argument in self.arguments)
+
+
+@dataclass(frozen=True)
+class ArgumentRole:
+    id: str
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -65,7 +78,7 @@ class OntologyConfig:
     version: str
     terms: tuple[OntologyTerm, ...]
     relations: tuple[OntologyRelation, ...]
-    link_relations: tuple[OntologyLinkRelation, ...] = ()
+    argument_roles: tuple[ArgumentRole, ...] = ()
 
     @property
     def term_ids(self) -> set[str]:
@@ -76,23 +89,36 @@ class OntologyConfig:
         return {relation.id for relation in self.relations}
 
     @property
-    def link_relation_ids(self) -> set[str]:
-        return {relation.id for relation in self.link_relations}
+    def argument_role_ids(self) -> set[str]:
+        return {role.id for role in self.argument_roles} | {
+            role for relation in self.relations for role in relation.argument_roles
+        }
+
+    def relation(self, relation_id: str) -> OntologyRelation | None:
+        return next((item for item in self.relations if item.id == relation_id), None)
 
     def as_prompt(self) -> str:
         terms = "\n".join(f"- {term.id}: {term.description}" for term in self.terms)
-        relations = "\n".join(
-            f"- {relation.id}: {relation.description}"
-            f" (source: {', '.join(relation.source_terms) or 'any'};"
-            f" target: {', '.join(relation.target_terms) or 'any'})"
-            for relation in self.relations
+        roles = "\n".join(
+            f"- {role.id}: {role.description}" for role in self.argument_roles
+        ) or "- (roles may be declared inline on relations)"
+        relations = []
+        for relation in self.relations:
+            arguments = ", ".join(
+                f"{argument.role} [{argument.cardinality}; "
+                f"types: {', '.join(argument.allowed_types) or 'any'}]"
+                for argument in relation.arguments
+            ) or "any named arguments"
+            projection = (
+                f"; projection: {relation.projection[0]} -> {relation.projection[1]}"
+                if relation.projection else ""
+            )
+            relations.append(f"- {relation.id}: {relation.description} ({arguments}{projection})")
+        return (
+            f"Ontology: {self.name} (version {self.version})\n"
+            f"Entity types:\n{terms}\nArgument roles:\n{roles}\n"
+            f"Relations:\n{'\n'.join(relations)}"
         )
-        link_relations = "\n".join(
-            f"- {relation.id}: {relation.description} (category: {relation.category})"
-            for relation in self.link_relations
-        )
-        link_section = f"\nProposition links:\n{link_relations}" if link_relations else ""
-        return f"Ontology: {self.name} (version {self.version})\nTerms:\n{terms}\nRelations:\n{relations}{link_section}"
 
 
 @dataclass(frozen=True)
@@ -134,88 +160,103 @@ def _read_yaml(source: str | Path | Mapping[str, Any]) -> dict[str, Any]:
     return _mapping(value, str(path))
 
 
+def _cardinality(value: Any, name: str) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = f"{value}..{value}"
+    value = _string(value, name)
+    if ".." not in value:
+        raise ConfigurationError(f"{name} must use N or N..M/N..n cardinality syntax")
+    lower, upper = value.split("..", 1)
+    if not lower.isdigit() or (upper != "n" and not upper.isdigit()):
+        raise ConfigurationError(f"{name} has invalid cardinality '{value}'")
+    if upper != "n" and int(upper) < int(lower):
+        raise ConfigurationError(f"{name} upper bound must not be below lower bound")
+    return value
+
+
 def load_ontology(source: str | Path | Mapping[str, Any] | OntologyConfig) -> OntologyConfig:
     if isinstance(source, OntologyConfig):
         return source
     raw = _read_yaml(source)
     required = {"name", "version", "terms", "relations"}
-    expected = required | {"link_relations"}
-    unexpected = set(raw) - expected
+    unexpected = set(raw) - (required | {"argument_roles"})
     missing = required - set(raw)
     if missing or unexpected:
         raise ConfigurationError(
-            f"ontology must contain required fields {sorted(required)} and optional link_relations; missing={sorted(missing)}, "
-            f"unexpected={sorted(unexpected)}"
+            f"ontology must contain required fields {sorted(required)} and optional argument_roles; "
+            f"missing={sorted(missing)}, unexpected={sorted(unexpected)}"
         )
-    name = _string(raw["name"], "ontology.name")
-    version = _string(raw["version"], "ontology.version")
-    raw_terms = raw["terms"]
-    raw_relations = raw["relations"]
-    if not isinstance(raw_terms, list) or not isinstance(raw_relations, list):
-        raise ConfigurationError("ontology.terms and ontology.relations must be lists")
-
+    terms_raw = raw["terms"]
+    if not isinstance(terms_raw, list):
+        raise ConfigurationError("ontology.terms must be a list")
     terms: list[OntologyTerm] = []
-    for index, raw_term in enumerate(raw_terms):
+    for index, raw_term in enumerate(terms_raw):
         item = _mapping(raw_term, f"ontology.terms[{index}]")
         if set(item) != {"id", "description"}:
-            raise ConfigurationError(
-                f"ontology.terms[{index}] must contain exactly id and description"
-            )
-        terms.append(OntologyTerm(_string(item["id"], f"ontology.terms[{index}].id"),
-                                  _string(item["description"], f"ontology.terms[{index}].description")))
-    term_ids = [term.id for term in terms]
-    if len(term_ids) != len(set(term_ids)):
+            raise ConfigurationError(f"ontology.terms[{index}] must contain exactly id and description")
+        terms.append(OntologyTerm(_string(item["id"], f"ontology.terms[{index}].id"), _string(item["description"], f"ontology.terms[{index}].description")))
+    term_ids = {term.id for term in terms}
+    if len(term_ids) != len(terms):
         raise ConfigurationError("ontology term IDs must be unique")
 
-    relations: list[OntologyRelation] = []
-    for index, raw_relation in enumerate(raw_relations):
-        item = _mapping(raw_relation, f"ontology.relations[{index}]")
-        allowed = {"id", "description", "source_terms", "target_terms"}
-        if set(item) - allowed or not {"id", "description"}.issubset(item):
-            raise ConfigurationError(
-                f"ontology.relations[{index}] requires id and description and only allows "
-                "source_terms and target_terms as optional fields"
-            )
-        source_terms = _string_list(item.get("source_terms"), f"ontology.relations[{index}].source_terms")
-        target_terms = _string_list(item.get("target_terms"), f"ontology.relations[{index}].target_terms")
-        unknown = set(source_terms + target_terms) - set(term_ids)
-        if unknown:
-            raise ConfigurationError(
-                f"ontology.relations[{index}] references unknown terms: {sorted(unknown)}"
-            )
-        relations.append(OntologyRelation(
-            _string(item["id"], f"ontology.relations[{index}].id"),
-            _string(item["description"], f"ontology.relations[{index}].description"),
-            tuple(source_terms), tuple(target_terms),
-        ))
-    relation_ids = [relation.id for relation in relations]
-    if len(relation_ids) != len(set(relation_ids)):
-        raise ConfigurationError("ontology relation IDs must be unique")
+    roles: list[ArgumentRole] = []
+    raw_roles = raw.get("argument_roles", [])
+    if isinstance(raw_roles, Mapping):
+        raw_roles = [{"id": role_id, "description": description} for role_id, description in raw_roles.items()]
+    if not isinstance(raw_roles, list):
+        raise ConfigurationError("ontology.argument_roles must be a list or mapping")
+    for index, raw_role in enumerate(raw_roles):
+        if isinstance(raw_role, str):
+            roles.append(ArgumentRole(_string(raw_role, f"ontology.argument_roles[{index}]")))
+            continue
+        item = _mapping(raw_role, f"ontology.argument_roles[{index}]")
+        if set(item) - {"id", "description"} or "id" not in item:
+            raise ConfigurationError(f"ontology.argument_roles[{index}] requires id and optional description")
+        roles.append(ArgumentRole(_string(item["id"], f"ontology.argument_roles[{index}].id"), str(item.get("description", ""))))
+    if len({role.id for role in roles}) != len(roles):
+        raise ConfigurationError("ontology argument role IDs must be unique")
 
-    raw_link_relations = raw.get("link_relations", [])
-    if not isinstance(raw_link_relations, list):
-        raise ConfigurationError("ontology.link_relations must be a list")
-    link_relations: list[OntologyLinkRelation] = []
-    for index, raw_link_relation in enumerate(raw_link_relations):
-        item = _mapping(raw_link_relation, f"ontology.link_relations[{index}]")
-        if set(item) != {"id", "category", "description"}:
-            raise ConfigurationError(
-                f"ontology.link_relations[{index}] must contain exactly id, category, and description"
-            )
-        category = _string(item["category"], f"ontology.link_relations[{index}].category")
-        if category not in {"temporal", "causal"}:
-            raise ConfigurationError(
-                f"ontology.link_relations[{index}].category must be 'temporal' or 'causal'"
-            )
-        link_relations.append(OntologyLinkRelation(
-            _string(item["id"], f"ontology.link_relations[{index}].id"),
-            category,
-            _string(item["description"], f"ontology.link_relations[{index}].description"),
-        ))
-    link_relation_ids = [relation.id for relation in link_relations]
-    if len(link_relation_ids) != len(set(link_relation_ids)):
-        raise ConfigurationError("ontology link relation IDs must be unique")
-    return OntologyConfig(name, version, tuple(terms), tuple(relations), tuple(link_relations))
+    raw_relations = raw["relations"]
+    if not isinstance(raw_relations, Mapping):
+        raise ConfigurationError("ontology.relations must be a mapping of relation IDs to definitions")
+    relations: list[OntologyRelation] = []
+    role_ids = {role.id for role in roles}
+    for relation_id, raw_relation in raw_relations.items():
+        rid = _string(relation_id, "ontology.relations relation ID")
+        item = _mapping(raw_relation, f"ontology.relations.{rid}")
+        allowed = {"description", "arguments", "projection"}
+        if set(item) - allowed or "description" not in item:
+            raise ConfigurationError(f"ontology.relations.{rid} requires description and allows arguments/projection")
+        raw_arguments = item.get("arguments", {})
+        if not isinstance(raw_arguments, Mapping):
+            raise ConfigurationError(f"ontology.relations.{rid}.arguments must be a mapping")
+        arguments: list[OntologyArgument] = []
+        for role_id, raw_argument in raw_arguments.items():
+            role = _string(role_id, f"ontology.relations.{rid}.arguments role")
+            argument = _mapping(raw_argument, f"ontology.relations.{rid}.arguments.{role}")
+            if set(argument) - {"cardinality", "allowed_types"}:
+                raise ConfigurationError(f"ontology.relations.{rid}.arguments.{role} has unsupported fields")
+            cardinality = _cardinality(argument.get("cardinality", "0..n"), f"ontology.relations.{rid}.arguments.{role}.cardinality")
+            allowed_types = tuple(_string_list(argument.get("allowed_types"), f"ontology.relations.{rid}.arguments.{role}.allowed_types"))
+            unknown_types = set(allowed_types) - term_ids
+            if unknown_types:
+                raise ConfigurationError(f"ontology.relations.{rid}.arguments.{role} references unknown types: {sorted(unknown_types)}")
+            arguments.append(OntologyArgument(role, cardinality, allowed_types))
+            role_ids.add(role)
+        projection = item.get("projection")
+        if projection is not None:
+            projection_items = _string_list(projection, f"ontology.relations.{rid}.projection")
+            if len(projection_items) != 2:
+                raise ConfigurationError(f"ontology.relations.{rid}.projection must contain exactly two roles")
+            if any(role not in {argument.role for argument in arguments} for role in projection_items):
+                raise ConfigurationError(f"ontology.relations.{rid}.projection roles must be declared arguments")
+            projection_tuple: tuple[str, str] | None = (projection_items[0], projection_items[1])
+        else:
+            projection_tuple = None
+        relations.append(OntologyRelation(rid, _string(item["description"], f"ontology.relations.{rid}.description"), tuple(arguments), projection_tuple))
+    if len({relation.id for relation in relations}) != len(relations):
+        raise ConfigurationError("ontology relation IDs must be unique")
+    return OntologyConfig(_string(raw["name"], "ontology.name"), _string(raw["version"], "ontology.version"), tuple(terms), tuple(relations), tuple(roles))
 
 
 def load_prompts(source: str | Path | Mapping[str, Any] | PromptConfig) -> PromptConfig:
@@ -223,32 +264,16 @@ def load_prompts(source: str | Path | Mapping[str, Any] | PromptConfig) -> Promp
         return source
     raw = _read_yaml(source)
     expected = {"domain", "version", "stages"}
-    unexpected = set(raw) - expected
-    missing = expected - set(raw)
-    if missing or unexpected:
-        raise ConfigurationError(
-            f"prompt pack must contain exactly {sorted(expected)}; missing={sorted(missing)}, "
-            f"unexpected={sorted(unexpected)}"
-        )
-    domain = _string(raw["domain"], "prompts.domain")
-    version = _string(raw["version"], "prompts.version")
+    if set(raw) != expected:
+        raise ConfigurationError(f"prompt pack must contain exactly {sorted(expected)}")
     raw_stages = _mapping(raw["stages"], "prompts.stages")
-    required_stages = {"summarize", "normalize", "decompose", "triple"}
-    allowed_stages = required_stages | {"link"}
-    if not set(raw_stages).issubset(allowed_stages) or not required_stages.issubset(raw_stages):
-        raise ConfigurationError(
-            f"prompts.stages must contain {sorted(required_stages)} and may optionally include 'link'"
-        )
+    required_stages = {"summarize", "normalize", "decompose", "extract", "resolve"}
+    if set(raw_stages) != required_stages:
+        raise ConfigurationError(f"prompts.stages must contain exactly {sorted(required_stages)}")
     stages: dict[str, PromptStage] = {}
     for stage, raw_stage in raw_stages.items():
         item = _mapping(raw_stage, f"prompts.stages.{stage}")
         if set(item) != {"system", "instruction", "output"}:
-            raise ConfigurationError(
-                f"prompts.stages.{stage} must contain exactly system, instruction, output"
-            )
-        stages[stage] = PromptStage(
-            _string(item["system"], f"prompts.stages.{stage}.system"),
-            _string(item["instruction"], f"prompts.stages.{stage}.instruction"),
-            _string(item["output"], f"prompts.stages.{stage}.output"),
-        )
-    return PromptConfig(domain, version, stages)
+            raise ConfigurationError(f"prompts.stages.{stage} must contain exactly system, instruction, output")
+        stages[stage] = PromptStage(_string(item["system"], f"prompts.stages.{stage}.system"), _string(item["instruction"], f"prompts.stages.{stage}.instruction"), _string(item["output"], f"prompts.stages.{stage}.output"))
+    return PromptConfig(_string(raw["domain"], "prompts.domain"), _string(raw["version"], "prompts.version"), stages)

@@ -1,15 +1,11 @@
-"""Typed intermediate representations used by the semantic compiler."""
+"""Typed representations used by the recursive semantic graph compiler."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 import networkx as nx
-
-
-PropositionKind = Literal["event", "state", "statement"]
-LinkCategory = Literal["temporal", "causal"]
 
 
 @dataclass(frozen=True)
@@ -34,55 +30,35 @@ class NormalizedText:
 
 
 @dataclass(frozen=True)
-class EntityMention:
-    mention: str
-    ontology_term: str
-    key: str | None = None
+class Entity:
+    """The universal semantic node.
+
+    Atomic entities have ``relation=None``. Relational entities use the same
+    structure with a configured relation; their arguments live in graph edges.
+    """
+
+    id: str
+    type: str
+    relation: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
-class Proposition:
-    proposition_id: str
-    chunk: Chunk
-    text: str
-    source_text: str
-    kind: PropositionKind
-    confidence: float | None = None
-    qualification: dict[str, Any] = field(default_factory=dict)
+class Argument:
+    role: str
+    entity_id: str
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
-class Triple:
-    triple_id: str
-    proposition_id: str
-    chunk: Chunk
-    subject: EntityMention
-    predicate: str
-    object: EntityMention
-    proposition: str
-    confidence: float | None = None
-    qualification: dict[str, Any] = field(default_factory=dict)
-    source_text: str = ""
-    source_start_char: int | None = None
-    source_end_char: int | None = None
+class RelationInstance:
+    """Extraction-time relation record before graph materialization."""
 
-
-@dataclass(frozen=True)
-class PropositionLink:
-    source_proposition_id: str
-    target_proposition_id: str
-    predicate: str
-    category: LinkCategory
-    confidence: float | None = None
-    qualification: dict[str, Any] = field(default_factory=dict)
-    provenance: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class StateInterval:
-    state_proposition_id: str
-    starts_at: str | None = None
-    ends_at: str | None = None
+    id: str
+    type: str
+    relation: str
+    arguments: tuple[Argument, ...] = ()
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -105,10 +81,7 @@ class DocumentTrace:
     chunks: list[Chunk]
     summaries: list[Summary]
     normalized: list[NormalizedText]
-    propositions: list[Proposition]
-    triples: list[Triple]
+    entities: list[Entity]
+    relations: list[RelationInstance]
     graph: nx.MultiDiGraph
     stats: list[StageStat] = field(default_factory=list)
-    links: list[PropositionLink] = field(default_factory=list)
-    state_intervals: list[StateInterval] = field(default_factory=list)
-    semantic_graph: nx.MultiDiGraph | None = None

@@ -1,8 +1,9 @@
 """Ontology-guided text graphicalization."""
 
 from .config import (
+    ArgumentRole,
     OntologyConfig,
-    OntologyLinkRelation,
+    OntologyArgument,
     OntologyRelation,
     OntologyTerm,
     PromptConfig,
@@ -29,16 +30,21 @@ from .pipeline import (
 )
 from .transformer import SemanticGraphicalizer
 from .types import (
+    Argument,
     Chunk,
     DocumentTrace,
-    EntityMention,
+    Entity,
     NormalizedText,
-    PropositionLink,
-    Proposition,
+    RelationInstance,
     Summary,
-    StateInterval,
     StageStat,
-    Triple,
+)
+from .graph import (
+    GraphValidationError,
+    graph_from_dict,
+    graph_to_dict,
+    project_binary_relations,
+    validate_graph,
 )
 from .visualization import (
     D3_CDN_URL,
@@ -53,6 +59,8 @@ from .visualization import (
 
 __all__ = [
     "CallableModelClient",
+    "Argument",
+    "ArgumentRole",
     "Chunk",
     "ConservativeEntityResolver",
     "DEFAULT_OPENAI_MODEL",
@@ -60,26 +68,28 @@ __all__ = [
     "DEFAULT_AESOP_STORIES_CACHE_FILE",
     "DocumentTrace",
     "D3_CDN_URL",
-    "EntityMention",
+    "Entity",
     "AESOP_GUTENBERG_URL",
     "ModelClient",
     "NormalizedText",
     "OpenAIModelClient",
     "OntologyConfig",
-    "OntologyLinkRelation",
+    "OntologyArgument",
     "OntologyRelation",
     "OntologyTerm",
     "ParagraphWindowSegmenter",
     "PromptConfig",
     "PromptStage",
-    "Proposition",
-    "PropositionLink",
+    "RelationInstance",
     "SemanticGraphicalizer",
     "SemanticPipeline",
     "Summary",
     "StageStat",
-    "StateInterval",
-    "Triple",
+    "GraphValidationError",
+    "graph_from_dict",
+    "graph_to_dict",
+    "project_binary_relations",
+    "validate_graph",
     "display_graph",
     "graph_to_d3_data",
     "graph_to_d3_html",

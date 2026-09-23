@@ -1,5 +1,5 @@
 name: aesop-narrative
-version: "1.0"
+version: "2.0"
 terms:
   - id: Character
     description: An entity that participates in a narrative.
@@ -19,42 +19,87 @@ terms:
     description: A characteristic attributed to a character.
   - id: Moral
     description: An explicit or inferred lesson of the tale.
+argument_roles:
+  - id: actor
+    description: Entity performing or initiating an action.
+  - id: target
+    description: Entity receiving or affected by an action.
+  - id: performer
+    description: Entity performing an action.
+  - id: action
+    description: Action being performed.
+  - id: bearer
+    description: Entity bearing a property or trait.
+  - id: trait
+    description: Trait associated with an entity.
+  - id: cause
+    description: Cause side of a causal assertion.
+  - id: effect
+    description: Effect side of a causal assertion.
+  - id: holder
+    description: Entity holding a goal or desire.
+  - id: goal
+    description: Goal held by an entity.
+  - id: subject
+    description: Subject of a location or teaching assertion.
+  - id: place
+    description: Place associated with an entity or action.
+  - id: moral
+    description: Moral conveyed by a narrative element.
+  - id: earlier
+    description: Earlier member of a temporal relation.
+  - id: later
+    description: Later member of a temporal relation.
 relations:
-  - id: interacts_with
+  interacts_with:
     description: A character or entity interacts with another entity.
-    source_terms: [Character, Animal, Human, Object]
-    target_terms: [Character, Animal, Human, Object]
-  - id: performs
+    arguments:
+      actor: {cardinality: 1, allowed_types: [Character, Animal, Human, Object]}
+      target: {cardinality: 1, allowed_types: [Character, Animal, Human, Object]}
+    projection: [actor, target]
+  performs:
     description: An entity performs an action.
-    source_terms: [Character, Animal, Human]
-    target_terms: [Action]
-  - id: wants
+    arguments:
+      performer: {cardinality: 1, allowed_types: [Character, Animal, Human]}
+      action: {cardinality: 1, allowed_types: [Action]}
+    projection: [performer, action]
+  wants:
     description: A character has a goal or desire.
-    source_terms: [Character, Animal, Human]
-    target_terms: [Goal]
-  - id: located_in
+    arguments:
+      holder: {cardinality: 1, allowed_types: [Character, Animal, Human]}
+      goal: {cardinality: 1, allowed_types: [Goal]}
+    projection: [holder, goal]
+  located_in:
     description: An entity or action occurs in a place.
-    source_terms: [Character, Animal, Human, Action]
-    target_terms: [Place]
-  - id: has_trait
+    arguments:
+      subject: {cardinality: 1, allowed_types: [Character, Animal, Human, Action]}
+      place: {cardinality: 1, allowed_types: [Place]}
+    projection: [subject, place]
+  has_trait:
     description: A character is described as having a trait.
-    source_terms: [Character, Animal, Human]
-    target_terms: [Trait]
-  - id: causes
-    description: An action or entity causes an outcome or event.
-    source_terms: [Action, Character, Animal, Human]
-    target_terms: [Action, Goal, Trait]
-  - id: teaches
+    arguments:
+      bearer: {cardinality: 1, allowed_types: [Character, Animal, Human]}
+      trait: {cardinality: 1, allowed_types: [Trait]}
+    projection: [bearer, trait]
+  causes:
+    description: A semantic object causes an outcome or event.
+    arguments:
+      cause: {cardinality: 1}
+      effect: {cardinality: 1}
+    projection: [cause, effect]
+  teaches:
     description: A tale or narrative element conveys a moral.
-    source_terms: [Character, Action, Moral]
-    target_terms: [Moral]
-link_relations:
-  - id: before
-    category: temporal
-    description: The source proposition occurs before the target proposition.
-  - id: after
-    category: temporal
-    description: The source proposition occurs after the target proposition.
-  - id: causes
-    category: causal
-    description: The source proposition explicitly causes the target proposition.
+    arguments:
+      subject: {cardinality: 1, allowed_types: [Character, Action, Moral]}
+      moral: {cardinality: 1, allowed_types: [Moral]}
+    projection: [subject, moral]
+  before:
+    description: One event or assertion occurs before another.
+    arguments:
+      earlier: {cardinality: 1}
+      later: {cardinality: 1}
+  after:
+    description: One event or assertion occurs after another.
+    arguments:
+      later: {cardinality: 1}
+      earlier: {cardinality: 1}
