@@ -78,7 +78,9 @@ relations:
   has_trait:
     description: A character is described as having a trait.
     arguments:
-      bearer: {cardinality: 1, allowed_types: [Character, Animal, Human]}
+      # Narrative extraction can attach a descriptive trait to an expressed
+      # action as well as to a character.
+      bearer: {cardinality: 1, allowed_types: [Character, Animal, Human, Action]}
       trait: {cardinality: 1, allowed_types: [Trait]}
     projection: [bearer, trait]
   causes:

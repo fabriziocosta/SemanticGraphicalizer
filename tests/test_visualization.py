@@ -21,7 +21,12 @@ from semantic_graphicalizer.types import Argument, Entity, RelationInstance
 def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
     ontology = load_ontology("configs/ontologies/aesop.yaml")
     graph = materialize_graph(
-        [Entity("event-a", "Action"), Entity("event-b", "Action")],
+        [
+            Entity("event-a", "Action"),
+            Entity("event-b", "Action"),
+            Entity("animal", "Animal"),
+            Entity("trait", "Trait"),
+        ],
         [
             RelationInstance(
                 "causal-assertion",
@@ -35,6 +40,12 @@ def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
                 "before",
                 (Argument("earlier", "event-a"), Argument("later", "event-b")),
             ),
+            RelationInstance(
+                "trait-assertion",
+                "Animal",
+                "has_trait",
+                (Argument("bearer", "animal"), Argument("trait", "trait")),
+            ),
         ],
         ontology,
         document_id="doc",
@@ -47,7 +58,17 @@ def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
         ("causes", "causal"),
         ("before", "temporal"),
     }
-    assert sum(link["edge_type"] == "argument" for link in data["links"]) == 4
+    assert sum(link["edge_type"] == "argument" for link in data["links"]) == 0
+    assert {node["id"] for node in data["nodes"]} == {"event-a", "event-b", "animal", "trait"}
+    projected_trait = next(link for link in data["links"] if link["predicate"] == "has_trait")
+    assert projected_trait["edge_type"] == "projection"
+    assert projected_trait["category"] == "semantic"
+    unprojected = graph_to_d3_data(graph, show_derived_links=False)
+    assert "trait-assertion" in {node["id"] for node in unprojected["nodes"]}
+    assert any(
+        link["source"] == "trait-assertion" and link["predicate"] == "bearer"
+        for link in unprojected["links"]
+    )
 
     projected = project_binary_relations(graph, ontology)
     assert projected["event-a"]["event-b"]["projection:causal-assertion"]["category"] == "causal"
@@ -109,6 +130,24 @@ def test_d3_data_uses_node_and_relation_labels() -> None:
             "directed": True,
         }],
     }
+
+
+def test_parallel_labels_receive_separate_offsets() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("source", label="Source")
+    graph.add_node("target", label="Target")
+    graph.add_edge("source", "target", predicate="causes", label="first evidence")
+    graph.add_edge("source", "target", predicate="before", label="second evidence")
+
+    data = graph_to_d3_data(graph)
+    assert {(link["parallel_index"], link["parallel_count"]) for link in data["links"]} == {
+        (0, 2),
+        (1, 2),
+    }
+    html = graph_to_d3_html(graph)
+    assert "const edgeOffset = d =>" in html
+    assert "const edgeDistance = d =>" in html
+    assert "linkGeometry(d).labelX" in html
 
 
 def test_d3_data_exposes_reified_entity_and_argument_categories() -> None:

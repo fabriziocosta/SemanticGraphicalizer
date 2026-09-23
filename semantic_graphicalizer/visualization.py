@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from html import escape
 from textwrap import wrap
 from typing import Any
@@ -84,19 +85,44 @@ def _graph_from_value(value: Any) -> nx.Graph:
     return graph
 
 
-def _derived_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
-    """Derive display-only temporal/causal links from reified relation nodes."""
+def _binary_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
+    """Derive display-only links from binary reified relation nodes."""
 
     if graph.graph.get("projection") == "binary_relations":
         return []
     if not graph.is_directed() or not graph.is_multigraph():
         return []
+
+    def source_fragment(data: dict[str, Any]) -> str:
+        """Find the relation's own evidence without conflating it with arguments."""
+
+        direct = data.get("source_text")
+        if direct:
+            return str(direct)
+        attributes = data.get("attributes")
+        if isinstance(attributes, dict):
+            direct = attributes.get("source_text")
+            if direct:
+                return str(direct)
+            provenance = attributes.get("provenance")
+        else:
+            provenance = data.get("provenance")
+        if isinstance(provenance, dict):
+            direct = provenance.get("source_text")
+            if direct:
+                return str(direct)
+        if isinstance(provenance, (list, tuple)):
+            for item in provenance:
+                if isinstance(item, dict) and item.get("source_text"):
+                    return str(item["source_text"])
+        return ""
+
     derived: list[dict[str, Any]] = []
     for relation_id, node_data in graph.nodes(data=True):
         category = node_data.get("relation_category")
         projection_roles = node_data.get("projection_roles")
         relation_name = node_data.get("relation")
-        if category not in {"temporal", "causal"} or not relation_name:
+        if not relation_name:
             continue
         if not isinstance(projection_roles, (list, tuple)) or len(projection_roles) != 2:
             continue
@@ -118,13 +144,77 @@ def _derived_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
             "target": str(target_targets[0]),
             "label": str(relation_name),
             "predicate": str(relation_name),
-            "source_fragment": "",
-            "edge_type": "derived_projection",
-            "category": category,
+            "source_fragment": source_fragment(node_data),
+            "edge_type": "derived_projection" if category in {"temporal", "causal"} else "projection",
+            "category": category or "semantic",
             "directed": True,
             "relation_entity_id": str(relation_id),
         })
     return derived
+
+
+def _display_projection_view(
+    graph: nx.Graph,
+    *,
+    show_derived_links: bool,
+) -> tuple[set[Any], list[dict[str, Any]]]:
+    """Return visible nodes and links for the reified display.
+
+    Standalone binary relation nodes collapse into direct links. A binary
+    relation that is itself used as an argument remains visible so recursive
+    assertions retain an identifiable endpoint.
+    """
+
+    if not show_derived_links:
+        return set(graph.nodes), []
+    binary_links = _binary_projection_links(graph)
+    if not binary_links:
+        return set(graph.nodes), []
+    by_relation = {link["relation_entity_id"]: link for link in binary_links}
+    collapsed = {
+        relation_id
+        for relation_id in by_relation
+        if relation_id in graph and graph.in_degree(relation_id) == 0
+    }
+    collapsed_strings = {str(node) for node in collapsed}
+    changed = True
+    while changed:
+        changed = False
+        for relation_id in list(collapsed):
+            link = by_relation[relation_id]
+            if link["source"] in collapsed_strings or link["target"] in collapsed_strings:
+                collapsed.remove(relation_id)
+                collapsed_strings.remove(str(relation_id))
+                changed = True
+    visible = set(graph.nodes) - collapsed
+    visible_links = [
+        link for link in binary_links
+        if link["relation_entity_id"] in visible or link["relation_entity_id"] in collapsed
+    ]
+    return visible, visible_links
+
+
+def _derived_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
+    """Backward-compatible temporal/causal subset of display projections."""
+
+    return [
+        link for link in _binary_projection_links(graph)
+        if link["category"] in {"temporal", "causal"}
+    ]
+
+
+def _annotate_parallel_links(links: list[dict[str, Any]]) -> None:
+    """Give links sharing endpoints stable offsets for readable labels."""
+
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for link in links:
+        groups[(str(link["source"]), str(link["target"]))].append(link)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        for index, link in enumerate(group):
+            link["parallel_index"] = index
+            link["parallel_count"] = len(group)
 
 
 def graph_to_text(
@@ -143,7 +233,22 @@ def graph_to_text(
     """
 
     graph = _graph_from_value(value)
-    node_items = list(graph.nodes(data=True))
+    visible_nodes, projection_links = _display_projection_view(
+        graph,
+        show_derived_links=show_derived_links,
+    )
+    node_items = [
+        (node_id, data)
+        for node_id, data in graph.nodes(data=True)
+        if node_id in visible_nodes
+    ]
+    node_lookup = {str(node_id): node_id for node_id in visible_nodes}
+    projected_by_source: dict[Any, list[tuple[Any, dict[str, Any]]]] = {}
+    for link in projection_links:
+        source = node_lookup.get(link["source"])
+        target = node_lookup.get(link["target"])
+        if source is not None and target is not None:
+            projected_by_source.setdefault(source, []).append((target, link))
     ordered_nodes = sorted(
         enumerate(node_items),
         key=lambda indexed_item: (
@@ -158,7 +263,8 @@ def graph_to_text(
     for _, (node_id, data) in ordered_nodes:
         if graph.is_directed():
             if graph.out_degree(node_id) == 0:
-                continue
+                if node_id not in projected_by_source:
+                    continue
         elif graph.degree(node_id) == 0:
             continue
 
@@ -177,6 +283,7 @@ def graph_to_text(
             relation_items = [
                 (target_id, relation_data)
                 for _, target_id, relation_data in graph.out_edges(node_id, data=True)
+                if target_id in visible_nodes
             ]
         else:
             relation_items = [
@@ -185,7 +292,9 @@ def graph_to_text(
                     relation_data,
                 )
                 for source_id, target_id, relation_data in graph.edges(node_id, data=True)
+                if source_id in visible_nodes and target_id in visible_nodes
             ]
+        relation_items.extend(projected_by_source.get(node_id, []))
         for target_id, relation_data in relation_items:
             predicate_value = relation_data.get("role", relation_data.get("predicate"))
             predicate = (
@@ -207,11 +316,6 @@ def graph_to_text(
             if target_text:
                 relation_text += f": {target_text}"
             lines.append(f"    {relation_text}")
-    if show_derived_links:
-        for link in _derived_projection_links(graph):
-            lines.append(
-                f"[{link['category']}] {link['source']} --{link['predicate']}--> {link['target']}"
-            )
     return "\n".join(lines)
 
 
@@ -228,6 +332,10 @@ def graph_to_d3_data(
 
     graph = _graph_from_value(value)
     max_width = _validate_max_width(max_width)
+    visible_nodes, projection_links = _display_projection_view(
+        graph,
+        show_derived_links=show_derived_links,
+    )
 
     def combined_label(primary: Any, source: Any) -> str:
         primary_text = _wrap_text(_ontology_text(primary), max_width)
@@ -247,14 +355,19 @@ def graph_to_d3_data(
             return "; ".join(str(mention) for mention in mentions if mention)
         return str(mentions) if mentions else ""
 
-    node_items = list(graph.nodes(data=True))
+    node_items = [
+        (node_id, data)
+        for node_id, data in graph.nodes(data=True)
+        if node_id in visible_nodes
+    ]
     sequence_by_node = {
         node_id: data.get("sequence", index)
         if isinstance(data.get("sequence", index), (int, float))
         else index
         for index, (node_id, data) in enumerate(node_items)
     }
-    components = list(nx.connected_components(graph.to_undirected()))
+    visible_graph = graph.subgraph(visible_nodes)
+    components = list(nx.connected_components(visible_graph.to_undirected()))
     components.sort(key=lambda component: min(sequence_by_node[node] for node in component))
     component_info: dict[Any, tuple[int, int, int]] = {}
     for component_order, component in enumerate(components):
@@ -277,7 +390,11 @@ def graph_to_d3_data(
         for node_id, data in node_items
     ]
     if graph.is_multigraph():
-        edges = graph.edges(data=True, keys=True)
+        edges = (
+            (source, target, key, data)
+            for source, target, key, data in graph.edges(data=True, keys=True)
+            if source in visible_nodes and target in visible_nodes
+        )
         links = [
             {
                 "source": str(source),
@@ -304,9 +421,17 @@ def graph_to_d3_data(
                 "directed": graph.is_directed(),
             }
             for source, target, data in graph.edges(data=True)
+            if source in visible_nodes and target in visible_nodes
         ]
     if show_derived_links:
-        links.extend(_derived_projection_links(graph))
+        for projection_link in projection_links:
+            link = dict(projection_link)
+            link["label"] = combined_label(
+                link.get("predicate", link.get("label", "")),
+                link.get("source_fragment", ""),
+            )
+            links.append(link)
+    _annotate_parallel_links(links)
     return {"nodes": nodes, "links": links}
 
 
@@ -504,6 +629,33 @@ def _d3_script(
 
   const labelWidth = d => Math.max(...String(d.label).split("\\n").map(line => line.length), 1);
   const nodeRadius = d => Math.max(42, Math.min(180, labelWidth(d) * 3.8));
+  const edgeLabelWidth = d => Math.max(...String(d.label).split("\\n").map(line => line.length), 1);
+  const edgeOffset = d => {{
+    const count = Number(d.parallel_count || 1);
+    const index = Number(d.parallel_index || 0);
+    return (index - (count - 1) / 2) * 18;
+  }};
+  const linkGeometry = d => {{
+    const dx = d.target.x - d.source.x;
+    const dy = d.target.y - d.source.y;
+    const length = Math.sqrt(dx * dx + dy * dy) || 1;
+    const normalX = -dy / length;
+    const normalY = dx / length;
+    const offset = edgeOffset(d);
+    return {{
+      x1: d.source.x + normalX * offset,
+      y1: d.source.y + normalY * offset,
+      x2: d.target.x + normalX * offset,
+      y2: d.target.y + normalY * offset,
+      labelX: (d.source.x + d.target.x) / 2 + normalX * offset,
+      labelY: (d.source.y + d.target.y) / 2 + normalY * offset,
+    }};
+  }};
+  const edgeDistance = d => {{
+    const parallelCount = Number(d.parallel_count || 1);
+    const textDistance = Math.min(320, edgeLabelWidth(d) * 5.5);
+    return Math.max(linkDistance, textDistance) + Math.min(90, (parallelCount - 1) * 24);
+  }};
   const componentValues = [...new Set(data.nodes.map(d => d.component_order))].sort((a, b) => a - b);
   const compactSpacing = componentValues.length > 1
     ? Math.min(requestedComponentSpacing, Math.max(0, (width - 180) / (componentValues.length - 1)))
@@ -515,11 +667,14 @@ def _d3_script(
       width / 2 + compactSpacing * (componentValues.length - 1) / 2,
     ])
     .padding(0);
+  const componentSpan = componentValues.length === 1
+    ? Math.max(220, width - 160)
+    : Math.min(260, Math.max(180, (width - 180) / componentValues.length));
   const componentTarget = d => {{
     const center = componentScale(d.component_order) ?? width / 2;
     const slots = Math.max(1, d.component_size - 1);
     const local = (d.component_index / slots - 0.5)
-      * Math.min(140, width / Math.max(2 * componentValues.length, 1));
+      * componentSpan;
     return center + local;
   }};
   const sequenceValues = [...new Set(data.nodes.map(d => d.sequence))].sort((a, b) => a - b);
@@ -576,12 +731,12 @@ def _d3_script(
     }});
 
   const simulation = d3.forceSimulation(data.nodes)
-    .force("link", d3.forceLink(data.links).id(d => d.id).distance(d => d.category === "temporal" ? Math.min(linkDistance, 90) : d.category === "causal" ? linkDistance * 1.15 : linkDistance).strength(linkStrength))
+    .force("link", d3.forceLink(data.links).id(d => d.id).distance(d => d.category === "temporal" ? Math.min(edgeDistance(d), 120) : d.category === "causal" ? edgeDistance(d) * 1.15 : edgeDistance(d)).strength(linkStrength))
     .force("charge", d3.forceManyBody().strength({charge_strength}))
     .force("center", d3.forceCenter(width / 2, height / 2))
     .force("x", d3.forceX(xTarget).strength(xStrength))
     .force("y", useTimeline ? d3.forceY(timelineYTarget).strength(yStrength) : null)
-    .force("collision", d3.forceCollide().radius(nodeRadius).strength(1).iterations(4))
+    .force("collision", d3.forceCollide().radius(d => nodeRadius(d) * 1.08).strength(1).iterations(6))
     .on("tick", () => {{
       if (hardTimeline) {{
         data.nodes.forEach(d => {{
@@ -594,15 +749,15 @@ def _d3_script(
         }});
       }}
       link
-        .attr("x1", d => d.source.x)
-        .attr("y1", d => d.source.y)
-        .attr("x2", d => d.target.x)
-        .attr("y2", d => d.target.y);
+        .attr("x1", d => linkGeometry(d).x1)
+        .attr("y1", d => linkGeometry(d).y1)
+        .attr("x2", d => linkGeometry(d).x2)
+        .attr("y2", d => linkGeometry(d).y2);
       edgeLabel
-        .attr("x", d => (d.source.x + d.target.x) / 2)
-        .attr("y", d => (d.source.y + d.target.y) / 2)
+        .attr("x", d => linkGeometry(d).labelX)
+        .attr("y", d => linkGeometry(d).labelY)
         .each(function(d) {{
-          const x = (d.source.x + d.target.x) / 2;
+          const x = linkGeometry(d).labelX;
           d3.select(this).selectAll("tspan").attr("x", x);
         }});
       node
@@ -800,10 +955,20 @@ def graph_to_static_svg(
         max_width=max_width,
         show_derived_links=show_derived_links,
     )
-    node_items = list(graph.nodes(data=True))
-    positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
     display_nodes = {item["id"]: item for item in display_data["nodes"]}
     display_links = display_data["links"]
+    node_ids = {item["id"] for item in display_data["nodes"]}
+    node_lookup = {
+        str(node_id): node_id
+        for node_id in graph.nodes
+        if str(node_id) in node_ids
+    }
+    node_items = [
+        (node_lookup[item["id"]], graph.nodes[node_lookup[item["id"]]])
+        for item in display_data["nodes"]
+    ]
+    visible_graph = graph.subgraph([node_id for node_id, _data in node_items])
+    positions = nx.kamada_kawai_layout(visible_graph, weight=None) if node_items else {}
     use_timeline = layout == "timeline"
     component_count = max(
         (int(item["component_order"]) for item in display_data["nodes"]),
@@ -834,7 +999,29 @@ def graph_to_static_svg(
             margin + (1.0 - (float(y) + 1.0) / 2.0) * usable_height,
         )
 
-    node_ids = {str(node_id): node_id for node_id in graph.nodes}
+    def edge_geometry(link: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
+        source = node_lookup[str(link["source"])]
+        target = node_lookup[str(link["target"])]
+        x1, y1 = point(source)
+        x2, y2 = point(target)
+        dx = x2 - x1
+        dy = y2 - y1
+        length = (dx * dx + dy * dy) ** 0.5 or 1.0
+        normal_x = -dy / length
+        normal_y = dx / length
+        count = int(link.get("parallel_count", 1))
+        index = int(link.get("parallel_index", 0))
+        offset = (index - (count - 1) / 2) * 18.0
+        offset_x = normal_x * offset
+        offset_y = normal_y * offset
+        return (
+            x1 + offset_x,
+            y1 + offset_y,
+            x2 + offset_x,
+            y2 + offset_y,
+            (x1 + x2) / 2 + offset_x,
+            (y1 + y2) / 2 + offset_y,
+        )
 
     def xml_text(value: Any) -> str:
         return escape(str(value), quote=True)
@@ -876,12 +1063,11 @@ def graph_to_static_svg(
         )
 
     for link in display_links:
-        source = node_ids.get(str(link["source"]))
-        target = node_ids.get(str(link["target"]))
+        source = node_lookup.get(str(link["source"]))
+        target = node_lookup.get(str(link["target"]))
         if source is None or target is None:
             continue
-        x1, y1 = point(source)
-        x2, y2 = point(target)
+        x1, y1, x2, y2, label_x, label_y = edge_geometry(link)
         category = link.get("category", "semantic")
         stroke = {"causal": "#c2410c", "temporal": "#2563eb"}.get(category, "#9aa0a6")
         stroke_width = {"causal": 2.5, "temporal": 1.5}.get(category, 1)
@@ -898,8 +1084,8 @@ def graph_to_static_svg(
         label = link["label"]
         if label:
             elements.append(svg_label(
-                (x1 + x2) / 2,
-                (y1 + y2) / 2 - 4,
+                label_x,
+                label_y - 4,
                 label,
                 font_size=11,
                 attributes=f'fill="{stroke}" text-anchor="middle" font-family="sans-serif"',
