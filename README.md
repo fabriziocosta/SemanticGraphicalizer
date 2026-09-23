@@ -78,12 +78,18 @@ set `charge_strength=0` to disable charge repulsion entirely:
 graphicalizer.display(
     graphs[0],
     mode="dynamic",
+    timeline_stiffness=1.0,
     charge_strength=0,
     link_distance=80,
     component_spacing=120,
     component_strength=0.15,
 )
 ```
+
+`timeline_stiffness` ranges from `0` to `1`. Higher values pull event nodes
+more strongly onto their sequence positions and common horizontal timeline;
+`1.0` produces the stiffest event rail while states, statements, and entities
+remain movable around it.
 
 Dynamic and static rendering automatically use a timeline layout for unified
 graphs. Use `layout="force"` to request the legacy force/Kamada-Kawai layout,

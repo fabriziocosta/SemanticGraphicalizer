@@ -155,6 +155,16 @@ def test_d3_charge_strength_is_tunable_and_less_repelled_by_default() -> None:
     assert "const requestedComponentSpacing = 120.0;" in tuned
     assert "const componentStrength = 0.1;" in tuned
     assert 'force("charge", d3.forceManyBody().strength(-1.0))' in tuned
+    timeline = graph_to_d3_html(graph, timeline_stiffness=1.0)
+    assert "const timelineStiffness = 1.0;" in timeline
+    assert "const hardTimeline = useTimeline && timelineStiffness >= 0.999;" in timeline
+    assert "d.x = timelineX(d);" in timeline
+    assert "d.y = timelineY;" in timeline
+    assert "isTimelineEvent" in timeline
+    with pytest.raises(ValueError, match="timeline_stiffness"):
+        graph_to_d3_html(graph, timeline_stiffness=1.1)
+    with pytest.raises(ValueError, match="timeline_stiffness"):
+        graph_to_d3_html(graph, timeline_stiffness=-0.1)
     with pytest.raises(ValueError, match="charge_strength"):
         graph_to_d3_html(graph, charge_strength=10)
     with pytest.raises(ValueError, match="link_distance"):

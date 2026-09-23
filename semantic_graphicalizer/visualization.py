@@ -42,6 +42,12 @@ def _validate_nonnegative_number(value: float, name: str) -> float:
     return float(value)
 
 
+def _validate_stiffness(value: float, name: str = "timeline_stiffness") -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        raise ValueError(f"{name} must be a number between 0 and 1")
+    return float(value)
+
+
 def _validate_layout(layout: str) -> str:
     if layout not in {"auto", "force", "timeline"}:
         raise ValueError("layout must be one of 'auto', 'force', or 'timeline'")
@@ -258,6 +264,7 @@ def graph_to_d3_html(
     link_distance: float = 90,
     component_spacing: float = 180,
     component_strength: float = 0.25,
+    timeline_stiffness: float = 0.95,
     layout: str = "auto",
     d3_url: str = D3_CDN_URL,
 ) -> str:
@@ -271,6 +278,7 @@ def graph_to_d3_html(
     link_distance = _validate_positive_number(link_distance, "link_distance")
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
+    timeline_stiffness = _validate_stiffness(timeline_stiffness)
     layout = _validate_layout(layout)
 
     root_id = f"semantic-graphicalizer-{uuid4().hex}"
@@ -294,6 +302,7 @@ def graph_to_d3_html(
         link_distance=link_distance,
         component_spacing=component_spacing,
         component_strength=component_strength,
+        timeline_stiffness=timeline_stiffness,
         layout=layout,
         root_setup=f"  const root = document.getElementById({json.dumps(root_id)});",
     )
@@ -313,6 +322,7 @@ def _d3_script(
     link_distance: float,
     component_spacing: float,
     component_strength: float,
+    timeline_stiffness: float,
     layout: str,
     root_setup: str,
 ) -> str:
@@ -326,6 +336,7 @@ def _d3_script(
   const linkDistance = {link_distance};
   const requestedComponentSpacing = {component_spacing};
   const componentStrength = {component_strength};
+  const timelineStiffness = {timeline_stiffness};
   const layoutMode = {json.dumps(layout)};
   const svg = d3.select(root)
     .append("svg")
@@ -454,6 +465,7 @@ def _d3_script(
   const sequenceValues = [...new Set(propositionNodes.map(d => d.sequence))].sort((a, b) => a - b);
   const hasPropositions = propositionNodes.length > 0;
   const useTimeline = layoutMode === "timeline" || (layoutMode === "auto" && hasPropositions);
+  const hardTimeline = useTimeline && timelineStiffness >= 0.999;
   const timelineY = height * 0.52;
   const timelineScale = d3.scalePoint()
     .domain(sequenceValues)
@@ -466,13 +478,17 @@ def _d3_script(
     if (d.proposition_kind === "statement") return timelineY + 150;
     return timelineY;
   }};
+  const isTimelineEvent = d => d.node_type === "proposition" && d.proposition_kind === "event";
   const xTarget = d => useTimeline ? timelineX(d) : componentTarget(d);
   const xStrength = d => useTimeline
-    ? (d.node_type === "proposition" ? 0.95 : 0.08)
+    ? (isTimelineEvent(d) ? timelineStiffness : d.node_type === "proposition" ? Math.min(0.25, timelineStiffness * 0.25) : 0.08)
     : componentStrength;
   const yStrength = d => useTimeline
-    ? (d.node_type === "proposition" ? 0.95 : 0.08)
+    ? (isTimelineEvent(d) ? timelineStiffness : d.node_type === "proposition" ? Math.min(0.25, timelineStiffness * 0.25) : 0.08)
     : 0;
+  const linkStrength = d => d.category === "temporal"
+    ? 0.35 + 0.65 * timelineStiffness
+    : d.category === "causal" ? 0.55 : 0.65;
 
   const drag = d3.drag()
     .on("start", (event, d) => {{
@@ -511,13 +527,23 @@ def _d3_script(
     }});
 
   const simulation = d3.forceSimulation(data.nodes)
-    .force("link", d3.forceLink(data.links).id(d => d.id).distance(d => d.category === "temporal" ? Math.min(linkDistance, 90) : d.category === "causal" ? linkDistance * 1.15 : linkDistance).strength(0.65))
+    .force("link", d3.forceLink(data.links).id(d => d.id).distance(d => d.category === "temporal" ? Math.min(linkDistance, 90) : d.category === "causal" ? linkDistance * 1.15 : linkDistance).strength(linkStrength))
     .force("charge", d3.forceManyBody().strength({charge_strength}))
     .force("center", d3.forceCenter(width / 2, height / 2))
     .force("x", d3.forceX(xTarget).strength(xStrength))
     .force("y", useTimeline ? d3.forceY(timelineYTarget).strength(yStrength) : null)
     .force("collision", d3.forceCollide().radius(nodeRadius).strength(1).iterations(4))
     .on("tick", () => {{
+      if (hardTimeline) {{
+        data.nodes.forEach(d => {{
+          if (isTimelineEvent(d) && !d.pinned) {{
+            d.x = timelineX(d);
+            d.y = timelineY;
+            d.vx = 0;
+            d.vy = 0;
+          }}
+        }});
+      }}
       link
         .attr("x1", d => d.source.x)
         .attr("y1", d => d.source.y)
@@ -553,6 +579,7 @@ def graph_to_d3_javascript(
     link_distance: float = 90,
     component_spacing: float = 180,
     component_strength: float = 0.25,
+    timeline_stiffness: float = 0.95,
     layout: str = "auto",
 ) -> str:
     """Return JavaScript that renders the graph into an IPython output area."""
@@ -563,6 +590,7 @@ def graph_to_d3_javascript(
     link_distance = _validate_positive_number(link_distance, "link_distance")
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
+    timeline_stiffness = _validate_stiffness(timeline_stiffness)
     layout = _validate_layout(layout)
     root_id = f"semantic-graphicalizer-{uuid4().hex}"
     payload = json.dumps(
@@ -583,6 +611,7 @@ def graph_to_d3_javascript(
         link_distance=link_distance,
         component_spacing=component_spacing,
         component_strength=component_strength,
+        timeline_stiffness=timeline_stiffness,
         layout=layout,
         root_setup=f"""  const root = document.createElement("div");
   root.id = {json.dumps(root_id)};
@@ -608,6 +637,7 @@ def graph_to_d3_iframe(
     link_distance: float = 90,
     component_spacing: float = 180,
     component_strength: float = 0.25,
+    timeline_stiffness: float = 0.95,
     layout: str = "auto",
     d3_url: str = D3_CDN_URL,
 ) -> str:
@@ -621,6 +651,7 @@ def graph_to_d3_iframe(
     link_distance = _validate_positive_number(link_distance, "link_distance")
     component_spacing = _validate_nonnegative_number(component_spacing, "component_spacing")
     component_strength = _validate_nonnegative_number(component_strength, "component_strength")
+    timeline_stiffness = _validate_stiffness(timeline_stiffness)
     layout = _validate_layout(layout)
 
     document = _graph_to_d3_document(
@@ -635,6 +666,7 @@ def graph_to_d3_iframe(
         link_distance=link_distance,
         component_spacing=component_spacing,
         component_strength=component_strength,
+        timeline_stiffness=timeline_stiffness,
         layout=layout,
         d3_url=d3_url,
     )
@@ -658,6 +690,7 @@ def _graph_to_d3_document(
     link_distance: float,
     component_spacing: float,
     component_strength: float,
+    timeline_stiffness: float,
     layout: str,
     d3_url: str,
 ) -> str:
@@ -678,6 +711,7 @@ def _graph_to_d3_document(
     link_distance=link_distance,
     component_spacing=component_spacing,
     component_strength=component_strength,
+    timeline_stiffness=timeline_stiffness,
     layout=layout,
     d3_url=d3_url,
 )}</body>
@@ -910,6 +944,7 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         link_distance=kwargs.get("link_distance", 90),
         component_spacing=kwargs.get("component_spacing", 180),
         component_strength=kwargs.get("component_strength", 0.25),
+        timeline_stiffness=kwargs.get("timeline_stiffness", 0.95),
         layout=kwargs.get("layout", "auto"),
         d3_url=kwargs.get("d3_url", D3_CDN_URL),
     )
