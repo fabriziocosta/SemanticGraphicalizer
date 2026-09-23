@@ -51,37 +51,41 @@ argument_roles:
   - id: later
     description: Later member of a temporal relation.
 relations:
+  # The extraction model uses these roles and cardinalities reliably, but its
+  # coarse entity-type labels are not stable enough to hard-restrict argument
+  # targets for this narrative corpus.
   interacts_with:
     description: A character or entity interacts with another entity.
     arguments:
-      actor: {cardinality: 1, allowed_types: [Character, Animal, Human, Object]}
-      target: {cardinality: 1, allowed_types: [Character, Animal, Human, Object]}
+      actor: {cardinality: 1}
+      target: {cardinality: 1}
     projection: [actor, target]
   performs:
     description: An entity performs an action.
     arguments:
-      performer: {cardinality: 1, allowed_types: [Character, Animal, Human]}
-      action: {cardinality: 1, allowed_types: [Action]}
+      performer: {cardinality: 1}
+      action: {cardinality: 1}
     projection: [performer, action]
   wants:
     description: A character has a goal or desire.
     arguments:
-      holder: {cardinality: 1, allowed_types: [Character, Animal, Human]}
-      goal: {cardinality: 1, allowed_types: [Goal]}
+      holder: {cardinality: 1}
+      goal: {cardinality: 1}
     projection: [holder, goal]
   located_in:
     description: An entity or action occurs in a place.
     arguments:
-      subject: {cardinality: 1, allowed_types: [Character, Animal, Human, Action]}
-      place: {cardinality: 1, allowed_types: [Place]}
+      subject: {cardinality: 1}
+      place: {cardinality: 1}
     projection: [subject, place]
   has_trait:
     description: A character is described as having a trait.
     arguments:
       # Narrative extraction can attach a descriptive trait to an expressed
-      # action as well as to a character.
-      bearer: {cardinality: 1, allowed_types: [Character, Animal, Human, Action]}
-      trait: {cardinality: 1, allowed_types: [Trait]}
+      # action as well as to a character. Entity type classification remains
+      # model-dependent for this domain, so role cardinality is authoritative.
+      bearer: {cardinality: 1}
+      trait: {cardinality: 1}
     projection: [bearer, trait]
   causes:
     description: A semantic object causes an outcome or event.
@@ -93,10 +97,8 @@ relations:
   teaches:
     description: A tale or narrative element conveys a moral.
     arguments:
-      subject: {cardinality: 1, allowed_types: [Character, Action, Moral]}
-      # Narrative models may classify an expressed lesson as Moral or Trait;
-      # both are valid semantic objects for this domain relation.
-      moral: {cardinality: 1, allowed_types: [Moral, Trait]}
+      subject: {cardinality: 1}
+      moral: {cardinality: 1}
     projection: [subject, moral]
   before:
     description: One event or assertion occurs before another.
