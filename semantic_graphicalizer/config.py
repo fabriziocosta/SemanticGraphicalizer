@@ -60,6 +60,7 @@ class OntologyRelation:
     description: str
     arguments: tuple[OntologyArgument, ...] = ()
     projection: tuple[str, str] | None = None
+    category: str | None = None
 
     @property
     def argument_roles(self) -> tuple[str, ...]:
@@ -113,7 +114,8 @@ class OntologyConfig:
                 f"; projection: {relation.projection[0]} -> {relation.projection[1]}"
                 if relation.projection else ""
             )
-            relations.append(f"- {relation.id}: {relation.description} ({arguments}{projection})")
+            category = f"; category: {relation.category}" if relation.category else ""
+            relations.append(f"- {relation.id}: {relation.description} ({arguments}{projection}{category})")
         return (
             f"Ontology: {self.name} (version {self.version})\n"
             f"Entity types:\n{terms}\nArgument roles:\n{roles}\n"
@@ -224,7 +226,7 @@ def load_ontology(source: str | Path | Mapping[str, Any] | OntologyConfig) -> On
     for relation_id, raw_relation in raw_relations.items():
         rid = _string(relation_id, "ontology.relations relation ID")
         item = _mapping(raw_relation, f"ontology.relations.{rid}")
-        allowed = {"description", "arguments", "projection"}
+        allowed = {"description", "arguments", "projection", "category"}
         if set(item) - allowed or "description" not in item:
             raise ConfigurationError(f"ontology.relations.{rid} requires description and allows arguments/projection")
         raw_arguments = item.get("arguments", {})
@@ -253,7 +255,14 @@ def load_ontology(source: str | Path | Mapping[str, Any] | OntologyConfig) -> On
             projection_tuple: tuple[str, str] | None = (projection_items[0], projection_items[1])
         else:
             projection_tuple = None
-        relations.append(OntologyRelation(rid, _string(item["description"], f"ontology.relations.{rid}.description"), tuple(arguments), projection_tuple))
+        category = item.get("category")
+        if category is not None:
+            category = _string(category, f"ontology.relations.{rid}.category")
+            if category not in {"temporal", "causal"}:
+                raise ConfigurationError(
+                    f"ontology.relations.{rid}.category must be 'temporal' or 'causal'"
+                )
+        relations.append(OntologyRelation(rid, _string(item["description"], f"ontology.relations.{rid}.description"), tuple(arguments), projection_tuple, category))
     if len({relation.id for relation in relations}) != len(relations):
         raise ConfigurationError("ontology relation IDs must be unique")
     return OntologyConfig(_string(raw["name"], "ontology.name"), _string(raw["version"], "ontology.version"), tuple(terms), tuple(relations), tuple(roles))

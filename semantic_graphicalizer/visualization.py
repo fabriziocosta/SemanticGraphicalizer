@@ -84,11 +84,55 @@ def _graph_from_value(value: Any) -> nx.Graph:
     return graph
 
 
+def _derived_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
+    """Derive display-only temporal/causal links from reified relation nodes."""
+
+    if graph.graph.get("projection") == "binary_relations":
+        return []
+    if not graph.is_directed() or not graph.is_multigraph():
+        return []
+    derived: list[dict[str, Any]] = []
+    for relation_id, node_data in graph.nodes(data=True):
+        category = node_data.get("relation_category")
+        projection_roles = node_data.get("projection_roles")
+        relation_name = node_data.get("relation")
+        if category not in {"temporal", "causal"} or not relation_name:
+            continue
+        if not isinstance(projection_roles, (list, tuple)) or len(projection_roles) != 2:
+            continue
+        source_role, target_role = projection_roles
+        source_targets = [
+            target
+            for _source, target, edge_data in graph.out_edges(relation_id, data=True)
+            if edge_data.get("role") == source_role
+        ]
+        target_targets = [
+            target
+            for _source, target, edge_data in graph.out_edges(relation_id, data=True)
+            if edge_data.get("role") == target_role
+        ]
+        if len(source_targets) != 1 or len(target_targets) != 1:
+            continue
+        derived.append({
+            "source": str(source_targets[0]),
+            "target": str(target_targets[0]),
+            "label": str(relation_name),
+            "predicate": str(relation_name),
+            "source_fragment": "",
+            "edge_type": "derived_projection",
+            "category": category,
+            "directed": True,
+            "relation_entity_id": str(relation_id),
+        })
+    return derived
+
+
 def graph_to_text(
     value: nx.Graph | Any,
     *,
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
+    show_derived_links: bool = True,
 ) -> str:
     """Return a readable, indented text view of the graph.
 
@@ -163,6 +207,11 @@ def graph_to_text(
             if target_text:
                 relation_text += f": {target_text}"
             lines.append(f"    {relation_text}")
+    if show_derived_links:
+        for link in _derived_projection_links(graph):
+            lines.append(
+                f"[{link['category']}] {link['source']} --{link['predicate']}--> {link['target']}"
+            )
     return "\n".join(lines)
 
 
@@ -173,6 +222,7 @@ def graph_to_d3_data(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
+    show_derived_links: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
     """Convert a graph or trace into D3 data with wrapped multiline labels."""
 
@@ -255,6 +305,8 @@ def graph_to_d3_data(
             }
             for source, target, data in graph.edges(data=True)
         ]
+    if show_derived_links:
+        links.extend(_derived_projection_links(graph))
     return {"nodes": nodes, "links": links}
 
 
@@ -267,6 +319,7 @@ def graph_to_d3_html(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
+    show_derived_links: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
     component_spacing: float = 180,
@@ -296,6 +349,7 @@ def graph_to_d3_html(
             edge_label_attr=edge_label_attr,
             show_source=show_source,
             max_width=max_width,
+            show_derived_links=show_derived_links,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -570,6 +624,7 @@ def graph_to_d3_javascript(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
+    show_derived_links: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
     component_spacing: float = 180,
@@ -595,6 +650,7 @@ def graph_to_d3_javascript(
             edge_label_attr=edge_label_attr,
             show_source=show_source,
             max_width=max_width,
+            show_derived_links=show_derived_links,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -628,6 +684,7 @@ def graph_to_d3_iframe(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
+    show_derived_links: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
     component_spacing: float = 180,
@@ -657,6 +714,7 @@ def graph_to_d3_iframe(
         edge_label_attr=edge_label_attr,
         show_source=show_source,
         max_width=max_width,
+        show_derived_links=show_derived_links,
         charge_strength=charge_strength,
         link_distance=link_distance,
         component_spacing=component_spacing,
@@ -681,6 +739,7 @@ def _graph_to_d3_document(
     edge_label_attr: str,
     show_source: bool,
     max_width: int,
+    show_derived_links: bool,
     charge_strength: float,
     link_distance: float,
     component_spacing: float,
@@ -702,6 +761,7 @@ def _graph_to_d3_document(
     edge_label_attr=edge_label_attr,
     show_source=show_source,
     max_width=max_width,
+    show_derived_links=show_derived_links,
     charge_strength=charge_strength,
     link_distance=link_distance,
     component_spacing=component_spacing,
@@ -722,6 +782,7 @@ def graph_to_static_svg(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
+    show_derived_links: bool = True,
     layout: str = "auto",
 ) -> str:
     """Return a deterministic SVG using timeline or Kamada-Kawai layout."""
@@ -737,6 +798,7 @@ def graph_to_static_svg(
         edge_label_attr=edge_label_attr,
         show_source=show_source,
         max_width=max_width,
+        show_derived_links=show_derived_links,
     )
     node_items = list(graph.nodes(data=True))
     positions = nx.kamada_kawai_layout(graph, weight=None) if node_items else {}
@@ -772,10 +834,7 @@ def graph_to_static_svg(
             margin + (1.0 - (float(y) + 1.0) / 2.0) * usable_height,
         )
 
-    if graph.is_multigraph():
-        edge_items = [(source, target, data) for source, target, _key, data in graph.edges(data=True, keys=True)]
-    else:
-        edge_items = list(graph.edges(data=True))
+    node_ids = {str(node_id): node_id for node_id in graph.nodes}
 
     def xml_text(value: Any) -> str:
         return escape(str(value), quote=True)
@@ -816,10 +875,14 @@ def graph_to_static_svg(
             '</defs>'
         )
 
-    for edge_index, (source, target, _data) in enumerate(edge_items):
+    for link in display_links:
+        source = node_ids.get(str(link["source"]))
+        target = node_ids.get(str(link["target"]))
+        if source is None or target is None:
+            continue
         x1, y1 = point(source)
         x2, y2 = point(target)
-        category = display_links[edge_index].get("category", "semantic")
+        category = link.get("category", "semantic")
         stroke = {"causal": "#c2410c", "temporal": "#2563eb"}.get(category, "#9aa0a6")
         stroke_width = {"causal": 2.5, "temporal": 1.5}.get(category, 1)
         dash = ' stroke-dasharray="6 4"' if category == "temporal" else ""
@@ -832,7 +895,7 @@ def graph_to_static_svg(
             f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
             f'stroke="{stroke}" stroke-width="{stroke_width}" stroke-opacity="0.85"{dash}{marker} />'
         )
-        label = display_links[edge_index]["label"]
+        label = link["label"]
         if label:
             elements.append(svg_label(
                 (x1 + x2) / 2,
@@ -923,6 +986,7 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         edge_label_attr=kwargs.get("edge_label_attr", "label"),
         show_source=kwargs.get("show_source", True),
         max_width=kwargs.get("max_width", 80),
+        show_derived_links=kwargs.get("show_derived_links", True),
         charge_strength=kwargs.get("charge_strength", -180),
         link_distance=kwargs.get("link_distance", 90),
         component_spacing=kwargs.get("component_spacing", 180),

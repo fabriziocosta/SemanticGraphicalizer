@@ -83,6 +83,7 @@ relations:
     projection: [bearer, trait]
   causes:
     description: A semantic object causes an outcome or event.
+    category: causal
     arguments:
       cause: {cardinality: 1}
       effect: {cardinality: 1}
@@ -97,11 +98,15 @@ relations:
     projection: [subject, moral]
   before:
     description: One event or assertion occurs before another.
+    category: temporal
     arguments:
       earlier: {cardinality: 1}
       later: {cardinality: 1}
+    projection: [earlier, later]
   after:
     description: One event or assertion occurs after another.
+    category: temporal
     arguments:
       later: {cardinality: 1}
       earlier: {cardinality: 1}
+    projection: [later, earlier]

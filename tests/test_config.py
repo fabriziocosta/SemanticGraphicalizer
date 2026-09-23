@@ -17,6 +17,9 @@ def test_aesop_configuration_loads_recursive_vocabularies() -> None:
     assert "interacts_with" in ontology.relation_ids
     assert {"actor", "target"} <= ontology.argument_role_ids
     assert ontology.relation("interacts_with").projection == ("actor", "target")
+    assert ontology.relation("causes").category == "causal"
+    assert ontology.relation("before").category == "temporal"
+    assert ontology.relation("before").projection == ("earlier", "later")
     assert prompts.render("extract", text="[]", ontology="demo")
 
 
@@ -30,6 +33,8 @@ def test_ontology_rejects_unknown_relation_types_and_invalid_projection() -> Non
         load_ontology({"name": "bad", "version": "1", "terms": [{"id": "Thing", "description": "one"}], "relations": {"rel": {"description": "relation", "arguments": {"role": {"allowed_types": ["Missing"]}}}}})
     with pytest.raises(ConfigurationError, match="exactly two roles"):
         load_ontology({"name": "bad", "version": "1", "terms": [{"id": "Thing", "description": "one"}], "relations": {"rel": {"description": "relation", "arguments": {"role": {}}, "projection": ["role"]}}})
+    with pytest.raises(ConfigurationError, match="category must be"):
+        load_ontology({"name": "bad", "version": "1", "terms": [{"id": "Thing", "description": "one"}], "relations": {"rel": {"description": "relation", "category": "spatial"}}})
 
 
 def test_prompts_require_recursive_extraction_stages() -> None:

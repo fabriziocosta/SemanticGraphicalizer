@@ -12,7 +12,52 @@ from semantic_graphicalizer import (
     graph_to_d3_javascript,
     graph_to_static_svg,
     graph_to_text,
+    load_ontology,
 )
+from semantic_graphicalizer.graph import materialize_graph, project_binary_relations
+from semantic_graphicalizer.types import Argument, Entity, RelationInstance
+
+
+def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
+    ontology = load_ontology("configs/ontologies/aesop.yaml")
+    graph = materialize_graph(
+        [Entity("event-a", "Action"), Entity("event-b", "Action")],
+        [
+            RelationInstance(
+                "causal-assertion",
+                "Action",
+                "causes",
+                (Argument("cause", "event-a"), Argument("effect", "event-b")),
+            ),
+            RelationInstance(
+                "temporal-assertion",
+                "Action",
+                "before",
+                (Argument("earlier", "event-a"), Argument("later", "event-b")),
+            ),
+        ],
+        ontology,
+        document_id="doc",
+        document_text="Event A causes and precedes Event B.",
+    )
+
+    data = graph_to_d3_data(graph)
+    derived = [link for link in data["links"] if link["edge_type"] == "derived_projection"]
+    assert {(link["predicate"], link["category"]) for link in derived} == {
+        ("causes", "causal"),
+        ("before", "temporal"),
+    }
+    assert sum(link["edge_type"] == "argument" for link in data["links"]) == 4
+
+    projected = project_binary_relations(graph, ontology)
+    assert projected["event-a"]["event-b"]["projection:causal-assertion"]["category"] == "causal"
+    assert projected["event-a"]["event-b"]["projection:temporal-assertion"]["category"] == "temporal"
+
+    svg = graph_to_static_svg(graph, show_source=False)
+    assert "#c2410c" in svg
+    assert "#2563eb" in svg
+    assert "causes" in svg
+    assert "before" in svg
 
 
 def test_d3_data_uses_node_and_relation_labels() -> None:

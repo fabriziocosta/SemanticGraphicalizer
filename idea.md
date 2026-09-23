@@ -14,6 +14,446 @@ The principal research hypothesis is that graph construction can become more rel
 
 ---
 
+## Current Implementation Status
+
+The framework described here has a working reference implementation in this
+repository (status checked 2026-09-23). The implementation is provider-neutral
+and exposes a scikit-learn-compatible `SemanticGraphicalizer`. Given an
+ontology configuration, a prompt configuration, and complete document strings,
+it returns one validated NetworkX `MultiDiGraph` per document. When no model
+client is supplied, it uses OpenAI structured JSON output with
+`gpt-4.1-mini`; deterministic fake clients and callable clients can be
+injected for tests or alternative providers.
+
+The implemented execution path is:
+
+```text
+Document
+  → paragraph/window segmentation
+  → per-chunk summarization
+  → ontology-conditioned normalization
+  → atomic assertion decomposition
+  → typed entity and reified-relation extraction
+  → document-level cross-chunk/higher-order relation resolution
+  → ontology validation and graph materialization
+```
+
+The following parts of the proposal are implemented:
+
+* YAML-backed ontology and prompt loading, including ontology terms,
+  argument roles, relation schemas, allowed argument types, cardinalities, and
+  optional binary projections;
+* chunk, summary, normalized-text, entity, argument, relation, and document
+  trace data structures;
+* paragraph-aware segmentation with character limits and optional overlap;
+* strict structured-output schemas for all five model stages:
+  `summarize`, `normalize`, `decompose`, `extract`, and `resolve`;
+* stable document IDs, conservative entity IDs, model-output validation,
+  retry with exponential backoff for transient provider failures, and progress
+  statistics for every stage;
+* recursive reified graph entities: atomic entities have `relation=None`,
+  while relation instances are also nodes whose outgoing edges carry named
+  argument roles. Relation arguments may target other relation nodes;
+* ontology-constrained graph validation, explicit binary-relation projection,
+  and JSON-safe NetworkX node-link serialization;
+* provenance on extracted entities, relations, and arguments, including
+  document/chunk identifiers, source text, and aligned character spans when
+  alignment is possible;
+* dynamic D3, static SVG, and indented text renderers, with source mentions,
+  relation labels, argument roles, temporal/causal styling, and optional
+  timeline layout controls;
+* a reusable Project Gutenberg Aesop loader with raw-text and parsed-story
+  caching, together with a notebook workflow for loading, graphing, and
+  visualizing complete fables.
+
+The implementation is intentionally narrower than the full research proposal.
+It currently processes chunks independently before one document-level resolve
+call; it does not yet implement hierarchical section/document summarization,
+ontology-subgraph retrieval, learned entity/coreference resolution, systematic
+duplicate-assertion reconciliation, contradiction handling, RDF/OWL export,
+or the proposed empirical benchmark and ablation programme. The default
+resolver creates stable IDs from normalized mentions, so semantic aliases and
+cross-document identity remain open research problems. The canonical graph is
+a reified NetworkX graph; direct binary edges are an explicitly derived view,
+not the primary representation.
+
+The current automated test suite covers configuration validation, staged
+pipeline behavior, recursive relations, graph validation and round trips,
+model-client integration, visualization, and the Aesop cache loader.
+
+## Recursive Reified Semantic Representation
+
+The semantic core of the implementation is a fully recursive reified graph.
+It is designed to represent narrative text, scientific discourse, causal and
+temporal structure, evidence, logic, measurements, events, states, and
+arbitrary n-ary relations through one uniform mechanism.
+
+### One universal semantic primitive
+
+Every semantic object is an `Entity`. This includes ordinary domain objects:
+
+```text
+fox, rabbit, protein_X, experiment_17, paper_B, temperature
+```
+
+and assertions or relations such as:
+
+```text
+the fox chases the rabbit
+event_A causes event_B
+experiment_17 supports claim_C
+paper_B contradicts claim_D
+```
+
+The canonical semantic record is:
+
+```python
+@dataclass(frozen=True)
+class Entity:
+    id: str
+    type: str
+    relation: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+```
+
+The fields have distinct meanings:
+
+* `id` is the stable identity of the semantic object;
+* `type` is its ontology-controlled semantic type;
+* `relation` is the ontology-controlled relation it instantiates, or `None`
+  for an atomic entity;
+* `attributes` contains non-structural metadata such as provenance,
+  confidence, qualification, source text, modality, attribution, mentions,
+  aligned spans, statistical information, and model metadata.
+
+`Entity.type` and `Entity.relation` are independent. For example, both a
+`Hypothesis` and a `Conclusion` may instantiate `causes`, while an `Event`
+may instantiate `eats`. The type describes what kind of semantic object the
+assertion is; the relation describes the relation represented by that object.
+
+### Atomic and relational entities
+
+The only structural distinction is:
+
+```text
+Atomic Entity:     relation = None
+Relational Entity: relation != None
+```
+
+An atomic entity such as `fox` has no argument edges. A relational entity such
+as “the fox chases the rabbit” is itself a graph node with its own identity,
+type, relation, attributes, and argument edges. Events, states, claims,
+measurements, evidence statements, and temporal assertions are not separate
+graph primitives; they are ordinary relational entities whose ontology type
+and relation express their meaning.
+
+### Reify every relation
+
+Every extracted semantic relation is reified. For:
+
+```text
+The fox chases the rabbit.
+```
+
+the canonical graph contains:
+
+```text
+fox       : type = Animal, relation = None
+rabbit    : type = Animal, relation = None
+R1        : type = Event,  relation = chases
+
+R1 --agent----> fox
+R1 --patient--> rabbit
+```
+
+The direct view `fox --chases--> rabbit` is only a derived projection. It is
+not the canonical representation because it loses assertion identity,
+argument-role detail, provenance, qualification, and the ability to use the
+assertion as an argument of another assertion.
+
+Propositions and triples may still be useful names for intermediate pipeline
+outputs or evaluation units, but they are not competing structural graph
+models. In the implementation, `Summary`, `NormalizedText`, and decomposed
+assertion records are transient stage representations; `RelationInstance` and
+`Argument` are extraction-time adapters; the integrated graph is always built
+from the common `Entity` node model.
+
+### Named arguments, arbitrary arity, and repeated roles
+
+Relations do not have a universal subject/object shape and are not limited to
+binary edges. Every argument is a named edge from the relational entity to an
+entity:
+
+```text
+RelationalEntity --ArgumentRole--> Entity
+```
+
+Examples include:
+
+```text
+R1 : type = Event, relation = gives
+R1 --giver-----> John
+R1 --recipient-> Mary
+R1 --theme-----> Book
+```
+
+```text
+R2 : type = Transaction, relation = purchase
+R2 --buyer----> Alice
+R2 --seller---> Shop
+R2 --item-----> Book
+R2 --price----> Price20
+R2 --time-----> T1
+```
+
+```text
+R3 : type = Measurement, relation = measures
+R3 --sample----> Sample17
+R3 --quantity--> Temperature
+R3 --value-----> Value42
+R3 --unit------> Celsius
+R3 --method----> Method3
+```
+
+Argument storage is list-like through `Argument` records and
+`MultiDiGraph` edges, so a role may repeat:
+
+```text
+R4 : relation = supports
+R4 --evidence--> experiment_A
+R4 --evidence--> experiment_B
+R4 --evidence--> dataset_C
+R4 --claim-----> claim_X
+```
+
+There is therefore no global relation arity. The ontology may define a
+relation-specific schema, but unary, binary, ternary, and arbitrary n-ary
+relations all use the same topology.
+
+### Three independent controlled vocabularies
+
+The ontology keeps three logically separate vocabularies:
+
+```text
+Entity types   → Animal, Event, Experiment, Claim, Measurement, ...
+Relations      → chases, causes, supports, contradicts, measures, ...
+Argument roles → agent, patient, cause, effect, evidence, claim, ...
+```
+
+Relation names and argument-role names must not be collapsed. The relation
+describes the relational entity as a whole; the role describes the
+participation of one endpoint in that relation. Semantic roles are preferred
+to grammatical labels: `giver`, `recipient`, and `theme` are more useful than
+`subject`, `object`, and `object2`.
+
+### Ontology-constrained relation schemas
+
+A relation may declare expected argument roles, cardinalities, and optional
+target-type constraints:
+
+```yaml
+relations:
+  supports:
+    arguments:
+      evidence:
+        cardinality: 1..n
+        allowed_types: [Experiment, Observation, Dataset, Analysis]
+      claim:
+        cardinality: 1
+        allowed_types: [Claim, Hypothesis, Conclusion, CausalClaim]
+```
+
+Schemas are optional, so the representation remains domain-independent. When
+a schema is present, graph validation checks required roles, cardinalities,
+declared roles, and allowed target types. The current implementation performs
+these checks before returning the canonical graph.
+
+### Unrestricted recursive reification
+
+Every argument endpoint is an entity, and a relational entity is also an
+entity. Relations can therefore refer to relations without introducing a new
+graph mechanism at each level:
+
+```text
+R1 : type = Event, relation = increases
+R1 --driver----> temperature
+R1 --outcome---> reaction_rate
+
+R2 : type = CausalClaim, relation = causes
+R2 --cause-----> R1
+R2 --effect----> R3
+
+R4 : type = EvidenceStatement, relation = supports
+R4 --evidence--> experiment_17
+R4 --claim-----> R2
+```
+
+There is no semantic `depth`, `level`, or `reification_level` field. Recursion
+is expressed by graph topology. Nested assertions may be arbitrarily deep,
+and cycles are allowed where they are semantically valid. The implementation
+does not impose a global recursive depth or arity limit.
+
+### One mechanism for narrative and scientific semantics
+
+Temporal, causal, evidential, logical, state, and measurement relations are
+not structurally special. They are all relational entities:
+
+```text
+R1 : type = State, relation = has_state
+R1 --bearer----> fox
+R1 --state------> hungry
+
+R2 : type = TemporalAssertion, relation = starts_at
+R2 --state------> R1
+R2 --boundary---> event_3
+
+R3 : type = EvidenceStatement, relation = supports
+R3 --evidence---> experiment_17
+R3 --claim-------> R4
+```
+
+Likewise, a scientific statement can use exactly the same structure:
+
+```text
+R4 : type = CausalClaim, relation = causes
+R4 --cause------> increased_temperature
+R4 --effect-----> faster_reaction_rate
+```
+
+The relation `causes` represents the semantic assertion; it does not imply
+that the assertion is certainly true. Epistemic type, confidence,
+qualification, modality, attribution, evidence, and provenance remain
+separate attributes or separate relational entities. A support relation is
+itself an assertion and therefore receives its own identity and provenance.
+
+### Canonical NetworkX topology
+
+The canonical graph is a `networkx.MultiDiGraph` whose nodes are entities and
+whose structural argument edges use a consistent convention:
+
+```python
+graph.add_node(
+    entity.id,
+    id=entity.id,
+    type=entity.type,
+    relation=entity.relation,
+    attributes=entity.attributes,
+)
+
+graph.add_edge(
+    relation_entity_id,
+    argument_entity_id,
+    edge_type="argument",
+    role="evidence",
+    attributes=argument.attributes,
+)
+```
+
+Relation names such as `chases` and `causes` are stored on the relational
+entity's `relation` field, not used as canonical participant-to-participant
+edge names. Argument edges may carry their own attributes, including
+confidence, ordering, weights, surface grammatical roles, source spans, and
+provenance.
+
+### Identity and provenance at every level
+
+Relational entities are not silently deduplicated merely because they share a
+relation and arguments. Two documents may independently assert the same
+relation, and those assertions may need to remain distinct:
+
+```text
+R1 : relation = causes, cause = A, effect = B, provenance = paper_1
+R2 : relation = causes, cause = A, effect = B, provenance = paper_2
+```
+
+The current pipeline preserves independent relation IDs and provenance during
+recursive graph materialization. Entity mention resolution may merge atomic
+entities when their stable resolver IDs match, but semantic aliasing and
+assertion reconciliation remain explicit later-stage research problems.
+
+Each entity and argument edge preserves, where available:
+
+```text
+document_id, chunk_id, source_text,
+start_char, end_char, mention spans,
+confidence, qualification, modality, attribution
+```
+
+Provenance is not inherited from a lower-order relation as though it were the
+provenance of a higher-order assertion. A causal assertion and a support
+assertion that refers to it retain separate provenance records.
+
+### Pipeline consequences
+
+The recursive semantic model determines the processing sequence:
+
+```text
+1. segment the document;
+2. summarize and normalize where useful;
+3. decompose normalized text into atomic assertions;
+4. identify atomic entities;
+5. identify relation instances and assign ontology types;
+6. assign named argument roles;
+7. resolve argument references, including relation references;
+8. create relational entity nodes and argument edges;
+9. detect explicitly supported higher-order relations;
+10. resolve cross-chunk references at document level;
+11. validate against ontology schemas;
+12. materialize the unified MultiDiGraph;
+13. optionally derive conventional binary projections.
+```
+
+The ability to represent a higher-order relation does not authorize the model
+to invent one. Relations are extracted only when supported by the source text,
+prompt task, and configured ontology.
+
+The extraction contract mirrors the graph model. A model returns atomic
+entities plus relation instances whose arguments reference entity or relation
+IDs from the same response:
+
+```json
+{
+  "id": "r18",
+  "type": "EvidenceStatement",
+  "relation": "supports",
+  "arguments": [
+    {"role": "evidence", "entity_id": "experiment_17", "attributes": {}},
+    {"role": "claim", "entity_id": "r12", "attributes": {}}
+  ],
+  "attributes": {"confidence": 0.94}
+}
+```
+
+The prompt supplies the allowed entity types, relation types, argument roles,
+and relation-specific schemas. Malformed references, unknown vocabulary
+values, and invalid argument structures are rejected before graph integration.
+
+### Validation, projection, and serialization
+
+The canonical graph maintains these invariants:
+
+1. Every semantic node has `id`, `type`, `relation`, and `attributes`.
+2. Atomic entities have `relation=None`.
+3. Relational entities have a non-null relation and argument edges.
+4. Every argument edge has a valid role and points to an existing entity.
+5. Relation schemas enforce required roles, cardinalities, declared roles,
+   and optional target-type constraints.
+6. Repeated roles, n-ary relations, relation-to-relation arguments, and valid
+   cycles are supported.
+7. Provenance and edge attributes survive graph integration and serialization.
+
+`project_binary_relations` derives ordinary direct edges only when the
+ontology declares an explicit ordered two-role projection. N-ary relations
+are not forced into binary form. `graph_to_dict` and `graph_from_dict` use a
+JSON-safe node-link representation so recursive and cyclic graph topology is
+represented by IDs and edges rather than nested Python objects.
+
+Visualization can show the canonical reified view with entity types, relation
+names, and argument-role labels, or a simpler projected view when appropriate.
+This makes a structure such as `supports(R2, R1)` visible as a `supports`
+relation node connected by `evidence` and `claim` edges, with `R1` itself
+displayed as the nested `causes` relation node.
+
 ## 1. Motivation
 
 The objective of text graphicalization is to transform textual information into an explicit graph representation in which entities, concepts, events, properties, and other relevant objects are represented as nodes and their relationships as edges.
@@ -336,6 +776,15 @@ The graph should distinguish ontology-level concepts from textual instances. Thi
 
 The ontology can additionally constrain which predicates are permissible for particular subject and object types. OWL supports class and property definitions and distinguishes object properties linking individuals from datatype properties linking individuals to data values.
 
+In the reference implementation, this stage is represented by typed,
+reified relation entities rather than by bare triples alone. A relation entity
+is a graph node with a configured `type` and `relation`; its argument edges
+carry roles such as `actor`, `target`, `cause`, or `effect`. This supports
+ternary relations, repeated argument roles, nested relations, provenance, and
+qualified or attributed assertions. The helper
+`project_binary_relations` can derive direct edges for ontology relations that
+declare an explicit two-role projection.
+
 Triple construction can therefore become a constrained operation rather than open-ended relation generation.
 
 ---
@@ -368,6 +817,13 @@ The integration stage must address several distinct problems:
 The operator \(\oplus\) should therefore not be interpreted as simple graph union. It represents a graph reconciliation procedure.
 
 Every graph assertion should ideally retain provenance linking it to the proposition, normalized representation, summary, chunk, and ultimately the source document from which it originated.
+
+The current implementation materializes a canonical `MultiDiGraph` after
+chunk-level extraction and a document-level `resolve` stage. It validates
+relation types, argument roles, allowed target types, and cardinalities before
+returning the graph. Extracted entities and relations retain source text and
+document/chunk provenance; character spans are attached when the source text
+can be aligned to the original document.
 
 This creates a trace such as:
 
@@ -770,7 +1226,7 @@ The sixth concerns provenance. The architecture should determine how much source
 
 ---
 
-## 22. Proposed System Architecture
+## 22. System Architecture: Proposal and Current Implementation
 
 The resulting architecture can be summarized as:
 
@@ -815,6 +1271,13 @@ The resulting architecture can be summarized as:
 ```
 
 A parallel provenance path should retain mappings from every final graph assertion back to its supporting source span.
+
+In the current implementation, the diagram's “entity resolution and graph
+integration” block is realized by conservative mention-based ID resolution,
+one document-level `resolve` model call, and deterministic ontology validation
+plus materialization. The remaining global reasoning steps in the diagram,
+including hierarchical document context and conflict reconciliation, are still
+research work.
 
 ---
 

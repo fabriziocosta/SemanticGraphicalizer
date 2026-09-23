@@ -107,16 +107,19 @@ def materialize_graph(
         )
     for sequence, entity in enumerate(all_entities.values()):
         attributes = dict(entity.attributes)
+        relation_definition = ontology.relation(entity.relation) if entity.relation is not None else None
         graph.add_node(
             entity.id,
             id=entity.id,
             type=entity.type,
             relation=entity.relation,
+            relation_category=relation_definition.category if relation_definition else None,
+            projection_roles=list(relation_definition.projection) if relation_definition and relation_definition.projection else None,
             attributes=attributes,
             label=entity.type,
             node_type="entity",
             sequence=sequence,
-            **{key: value for key, value in attributes.items() if key not in {"id", "type", "relation", "attributes"}},
+            **{key: value for key, value in attributes.items() if key not in {"id", "type", "relation", "relation_category", "projection_roles", "attributes"}},
         )
     known = set(all_entities)
     for relation in relations:
@@ -160,7 +163,7 @@ def project_binary_relations(graph: nx.MultiDiGraph, ontology: OntologyConfig) -
             target_targets[0],
             key=f"projection:{relation_id}",
             edge_type="projection",
-            category="semantic",
+            category=definition.category or "semantic",
             predicate=data["relation"],
             relation_entity_id=relation_id,
             attributes=relation_attrs,
