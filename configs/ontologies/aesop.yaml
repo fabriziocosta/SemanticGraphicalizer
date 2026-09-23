@@ -91,7 +91,9 @@ relations:
     description: A tale or narrative element conveys a moral.
     arguments:
       subject: {cardinality: 1, allowed_types: [Character, Action, Moral]}
-      moral: {cardinality: 1, allowed_types: [Moral]}
+      # Narrative models may classify an expressed lesson as Moral or Trait;
+      # both are valid semantic objects for this domain relation.
+      moral: {cardinality: 1, allowed_types: [Moral, Trait]}
     projection: [subject, moral]
   before:
     description: One event or assertion occurs before another.

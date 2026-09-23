@@ -106,7 +106,23 @@ class ConservativeEntityResolver:
         return f"{label}::{normalized}"
 
 
-_ATTRIBUTES_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": True}
+# OpenAI structured outputs require every object in a strict schema to set
+# additionalProperties=false and to list all properties as required. The
+# runtime Entity.attributes mapping remains open-ended; these are the
+# provider-safe fields the extraction model can emit directly, while the
+# pipeline continues to add arbitrary provenance and adapter metadata.
+_ATTRIBUTES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "confidence": {"type": ["number", "null"]},
+        "source_text": {"type": ["string", "null"]},
+        "modality": {"type": ["string", "null"]},
+        "negated": {"type": "boolean"},
+        "attribution": {"type": ["string", "null"]},
+    },
+    "required": ["confidence", "source_text", "modality", "negated", "attribution"],
+    "additionalProperties": False,
+}
 _SCHEMAS: dict[str, dict[str, Any]] = {
     "summarize": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": False},
     "normalize": {"type": "object", "properties": {"normalized": {"type": "string"}}, "required": ["normalized"], "additionalProperties": False},
