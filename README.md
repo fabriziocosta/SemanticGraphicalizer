@@ -76,6 +76,20 @@ graphicalizer.display(graphs[0], mode="static")
 graphicalizer.display(graphs[0], mode="text")
 ```
 
+The default OpenAI text embedder can vectorize the available text for every
+node in traces or graphs. Vectors are attached in place under the `embedding`
+node attribute; pass `embedder=...` to inject another provider or
+`node_text_fn=...` to control the text sent for each node:
+
+```python
+traces = graphicalizer.transform_with_trace(["The fox met the crow."])
+embedded_traces = graphicalizer.compute_embeddings(traces)
+vector = embedded_traces[0].graph.nodes["some-node"]["embedding"]
+```
+
+The default embedding model is `text-embedding-3-small` and uses the
+OpenAI embeddings endpoint. Set `OPENAI_API_KEY` before requesting embeddings.
+
 For a compact dynamic layout, reduce the link distance and component spacing;
 set `charge_strength=0` to disable charge repulsion entirely:
 

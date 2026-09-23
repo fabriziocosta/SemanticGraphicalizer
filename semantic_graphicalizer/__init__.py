@@ -18,9 +18,13 @@ from .aesop import (
     load_aesop_fables,
 )
 from .model import (
+    DEFAULT_OPENAI_EMBEDDING_MODEL,
     DEFAULT_OPENAI_MODEL,
+    CallableEmbeddingClient,
     CallableModelClient,
+    EmbeddingClient,
     ModelClient,
+    OpenAIEmbeddingClient,
     OpenAIModelClient,
 )
 from .pipeline import (
@@ -59,6 +63,8 @@ from .visualization import (
 
 __all__ = [
     "CallableModelClient",
+    "CallableEmbeddingClient",
+    "DEFAULT_OPENAI_EMBEDDING_MODEL",
     "Argument",
     "ArgumentRole",
     "Chunk",
@@ -71,8 +77,10 @@ __all__ = [
     "Entity",
     "AESOP_GUTENBERG_URL",
     "ModelClient",
+    "EmbeddingClient",
     "NormalizedText",
     "OpenAIModelClient",
+    "OpenAIEmbeddingClient",
     "OntologyConfig",
     "OntologyArgument",
     "OntologyRelation",

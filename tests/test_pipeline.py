@@ -13,7 +13,7 @@ from semantic_graphicalizer import (
 from semantic_graphicalizer.exceptions import StageOutputError
 from semantic_graphicalizer.graph import GraphValidationError, materialize_graph
 from semantic_graphicalizer.pipeline import ConservativeEntityResolver, ParagraphWindowSegmenter, _format_elapsed
-from semantic_graphicalizer.types import Argument, Entity, RelationInstance
+from semantic_graphicalizer.types import Argument, DocumentTrace, Entity, RelationInstance
 
 
 ONTOLOGY = {
@@ -67,8 +67,74 @@ class FakeModel:
         raise AssertionError(stage)
 
 
+class FakeEmbedder:
+    def __init__(self):
+        self.calls = []
+
+    def embed(self, texts):
+        texts = list(texts)
+        self.calls.append(texts)
+        return [[float(len(text)), float(index)] for index, text in enumerate(texts)]
+
+
 def make_transformer(extraction, resolved=None):
     return SemanticGraphicalizer(ONTOLOGY, PROMPTS, FakeModel(extraction, resolved), verbose=False)
+
+
+def test_compute_embeddings_accepts_traces_and_stores_vectors_on_nodes() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node(
+        "fox",
+        type="Person",
+        relation=None,
+        mentions=["fox"],
+        attributes={"mentions": ["fox"]},
+    )
+    graph.add_node(
+        "r1",
+        type="Event",
+        relation="causes",
+        source_text="The fox causes the result.",
+        attributes={"source_text": "The fox causes the result."},
+    )
+    trace = DocumentTrace("doc", "source", [], [], [], [], [], graph)
+    embedder = FakeEmbedder()
+    graphicalizer = SemanticGraphicalizer(
+        ONTOLOGY,
+        PROMPTS,
+        FakeModel({"entities": [], "relations": []}),
+        embedder=embedder,
+        verbose=False,
+    )
+
+    result = graphicalizer.compute_embeddings(trace, batch_size=1)
+
+    assert result == [trace]
+    assert len(embedder.calls) == 2
+    assert graph.nodes["fox"]["embedding"] == [len("Person | fox"), 0.0]
+    assert graph.nodes["r1"]["embedding"] == [len("Event : causes | The fox causes the result."), 0.0]
+
+
+def test_compute_embeddings_accepts_graphs_and_custom_text_attribute() -> None:
+    graph = nx.MultiDiGraph()
+    graph.add_node("fox", type="Person", relation=None)
+    embedder = FakeEmbedder()
+    graphicalizer = SemanticGraphicalizer(
+        ONTOLOGY,
+        PROMPTS,
+        FakeModel({"entities": [], "relations": []}),
+        embedder=embedder,
+        verbose=False,
+    )
+
+    result = graphicalizer.compute_embeddings(
+        [graph],
+        embedding_attribute="vector",
+        node_text_fn=lambda node_id, data: f"{node_id}:{data['type']}",
+    )
+
+    assert result == [graph]
+    assert graph.nodes["fox"]["vector"] == [float(len("fox:Person")), 0.0]
 
 
 def test_reified_binary_relation_and_projection() -> None:

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import json
 from typing import Any, Protocol
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 class ModelClient(Protocol):
@@ -28,6 +29,13 @@ class ModelClient(Protocol):
         ...
 
 
+class EmbeddingClient(Protocol):
+    """Minimal interface for text embedding providers."""
+
+    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        ...
+
+
 class CallableModelClient:
     """Adapt a callable to :class:`ModelClient`."""
 
@@ -45,6 +53,85 @@ class CallableModelClient:
         context: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         return self.function(stage=stage, prompt=prompt, schema=schema, context=context)
+
+
+class CallableEmbeddingClient:
+    """Adapt a callable to :class:`EmbeddingClient`."""
+
+    def __init__(self, function: Callable[[Sequence[str]], Sequence[Sequence[float]]]) -> None:
+        if not callable(function):
+            raise TypeError("function must be callable")
+        self.function = function
+
+    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        return self.function(texts)
+
+
+class OpenAIEmbeddingClient:
+    """Request text embeddings through the OpenAI embeddings endpoint.
+
+    The official SDK reads ``OPENAI_API_KEY`` from the environment when no
+    explicit client is provided. The default model is
+    ``text-embedding-3-small``.
+    """
+
+    def __init__(
+        self,
+        model: str = DEFAULT_OPENAI_EMBEDDING_MODEL,
+        client: Any = None,
+        *,
+        request_options: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("model must be a non-empty string")
+        if client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:  # pragma: no cover - depends on environment
+                raise ImportError(
+                    "The OpenAI embedding default requires the 'openai' package. "
+                    "Install the project dependencies or provide a custom embedder."
+                ) from exc
+            client = OpenAI()
+        if request_options is not None and not isinstance(request_options, Mapping):
+            raise TypeError("request_options must be a mapping")
+        reserved_options = {"model", "input"}
+        if reserved_options.intersection(request_options or {}):
+            raise ValueError(
+                "request_options cannot override model or input"
+            )
+        self.model = model
+        self.client = client
+        self.request_options = dict(request_options or {})
+
+    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        inputs = list(texts)
+        if not inputs or any(not isinstance(text, str) or not text.strip() for text in inputs):
+            raise ValueError("texts must contain non-empty strings")
+        request = {
+            "model": self.model,
+            "input": inputs,
+        }
+        request.update(self.request_options)
+        response = self.client.embeddings.create(**request)
+        data = response.get("data") if isinstance(response, Mapping) else getattr(response, "data", None)
+        if not isinstance(data, (list, tuple)):
+            raise ValueError("OpenAI returned no embedding data")
+        ordered = sorted(
+            data,
+            key=lambda item: (
+                item.get("index", 0) if isinstance(item, Mapping) else getattr(item, "index", 0)
+            ),
+        )
+        vectors: list[Sequence[float]] = []
+        for item in ordered:
+            vector = item.get("embedding") if isinstance(item, Mapping) else getattr(item, "embedding", None)
+            if not isinstance(vector, (list, tuple)):
+                raise ValueError("OpenAI returned an invalid embedding vector")
+            vectors.append(vector)
+        if len(vectors) != len(inputs):
+            raise ValueError("OpenAI returned a different number of embeddings than inputs")
+        return vectors
 
 
 class OpenAIModelClient:
@@ -144,3 +231,13 @@ def as_model_client(model: ModelClient | Callable[..., Mapping[str, Any]]) -> Mo
     if callable(model):
         return CallableModelClient(model)
     raise TypeError("model must expose generate(...) or be callable")
+
+
+def as_embedding_client(
+    embedder: EmbeddingClient | Callable[[Sequence[str]], Sequence[Sequence[float]]],
+) -> EmbeddingClient:
+    if hasattr(embedder, "embed"):
+        return embedder  # type: ignore[return-value]
+    if callable(embedder):
+        return CallableEmbeddingClient(embedder)
+    raise TypeError("embedder must expose embed(...) or be callable")
