@@ -68,8 +68,9 @@ def _base_graph(
     *,
     embedding_key: str,
     parallel_edge_policy: ParallelEdgePolicy,
-) -> nx.DiGraph:
-    base = nx.DiGraph()
+    preserve_direction: bool,
+) -> nx.DiGraph | nx.Graph:
+    base = nx.DiGraph() if preserve_direction else nx.Graph()
     base.graph.update(dict(graph.graph))
 
     vectors: dict[Any, np.ndarray] = {}
@@ -101,25 +102,35 @@ def _base_graph(
         for node_id in base.nodes:
             base.nodes[node_id]["attribute"] = vectors.get(node_id, np.zeros(dimension, dtype=float))
 
-    grouped_edges: dict[tuple[Any, Any], list[tuple[Any, dict[str, Any]]]] = {}
+    grouped_edges: dict[Any, list[tuple[Any, Any, Any, dict[str, Any]]]] = {}
     for source, target, key, data in graph.edges(keys=True, data=True):
-        grouped_edges.setdefault((source, target), []).append((key, dict(data)))
+        edge_group = (source, target) if preserve_direction else frozenset((source, target))
+        grouped_edges.setdefault(edge_group, []).append((source, target, key, dict(data)))
 
-    for (source, target), records in grouped_edges.items():
+    for records in grouped_edges.values():
         if len(records) > 1 and parallel_edge_policy == "error":
+            source, target = records[0][:2]
             raise ValueError(f"parallel semantic edges found between '{source}' and '{target}'")
-        roles = [record.get("role") for _key, record in records]
+        source, target = records[0][:2]
+        roles = [record.get("role") for _source, _target, _key, record in records]
         distinct_roles = sorted(set(roles), key=lambda role: (role is None, str(role)))
-        edge_data = dict(records[0][1])
+        edge_data = dict(records[0][3])
         edge_data["label"] = distinct_roles[0] if len(distinct_roles) == 1 else tuple(distinct_roles)
         semantic_edges = []
-        for key, record in records:
-            semantic_edges.append({"key": key, **record})
+        for edge_source, edge_target, key, record in records:
+            semantic_edge = {"key": key, **record}
+            if not preserve_direction:
+                semantic_edge["source"] = edge_source
+                semantic_edge["target"] = edge_target
+            semantic_edges.append(semantic_edge)
         edge_data["semantic_edges"] = semantic_edges
         if len(records) > 1:
-            edge_data["semantic_attributes"] = [dict(record.get("attributes", {})) for _key, record in records]
+            edge_data["semantic_attributes"] = [
+                dict(record.get("attributes", {}))
+                for _source, _target, _key, record in records
+            ]
         else:
-            edge_data["semantic_attributes"] = dict(records[0][1].get("attributes", {}))
+            edge_data["semantic_attributes"] = dict(records[0][3].get("attributes", {}))
         base.add_edge(source, target, **edge_data)
     return base
 
@@ -132,6 +143,7 @@ def semantic_graph_to_abstract_graph(
     parallel_edge_policy: ParallelEdgePolicy = "combine",
     nbits: int = 14,
     document_id: str | None = None,
+    preserve_direction: bool = True,
 ) -> Any:
     """Convert a canonical semantic ``MultiDiGraph`` to an ``AbstractGraph``.
 
@@ -151,9 +163,16 @@ def semantic_graph_to_abstract_graph(
         raise ValueError("chunk_key must be a non-empty string")
     if isinstance(nbits, bool) or not isinstance(nbits, int) or nbits < 1:
         raise ValueError("nbits must be a positive integer")
+    if not isinstance(preserve_direction, bool):
+        raise TypeError("preserve_direction must be a bool")
 
     AbstractGraph, sum_attribute_function = _abstractgraph_types()
-    base = _base_graph(graph, embedding_key=embedding_key, parallel_edge_policy=parallel_edge_policy)
+    base = _base_graph(
+        graph,
+        embedding_key=embedding_key,
+        parallel_edge_policy=parallel_edge_policy,
+        preserve_direction=preserve_direction,
+    )
     abstract = AbstractGraph(graph=base, nbits=nbits, attribute_function=sum_attribute_function)
     resolved_document_id = _document_id(graph, document_id)
 
@@ -194,6 +213,7 @@ def trace_to_abstract_graph(
     chunk_key: str = "chunk_id",
     parallel_edge_policy: ParallelEdgePolicy = "combine",
     nbits: int = 14,
+    preserve_direction: bool = True,
 ) -> Any:
     """Convert a trace's semantic graph to an ``AbstractGraph``."""
 
@@ -206,4 +226,5 @@ def trace_to_abstract_graph(
         parallel_edge_policy=parallel_edge_policy,
         nbits=nbits,
         document_id=trace.document_id,
+        preserve_direction=preserve_direction,
     )

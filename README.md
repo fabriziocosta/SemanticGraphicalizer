@@ -140,6 +140,14 @@ matrix = abstract.to_array()
 story_vector = matrix.sum(axis=0)
 ```
 
+Directedness is preserved by default. Pass `preserve_direction=False` to build
+an undirected base graph; reciprocal semantic edges are combined and their
+original endpoints remain recorded in `semantic_edges`:
+
+```python
+abstract = graphicalizer.to_abstract_graph(trace, preserve_direction=False)
+```
+
 Convert multiple existing graphs or traces in input order with
 `to_abstract_graphs`. When `embed_nodes=True`, node texts from the full input
 collection are embedded in batches before conversion:

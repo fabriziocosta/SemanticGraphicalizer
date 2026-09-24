@@ -311,6 +311,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         chunk_key: str = "chunk_id",
         parallel_edge_policy: str = "combine",
         nbits: int = 14,
+        preserve_direction: bool = True,
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> Any:
@@ -342,6 +343,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             chunk_key=chunk_key,
             parallel_edge_policy=parallel_edge_policy,
             nbits=nbits,
+            preserve_direction=preserve_direction,
         )
 
     def to_abstract_graphs(
@@ -353,6 +355,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         chunk_key: str = "chunk_id",
         parallel_edge_policy: str = "combine",
         nbits: int = 14,
+        preserve_direction: bool = True,
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> list[Any]:
@@ -389,6 +392,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise ValueError("parallel_edge_policy must be 'combine' or 'error'")
         if isinstance(nbits, bool) or not isinstance(nbits, int) or nbits < 1:
             raise ValueError("nbits must be a positive integer")
+        if not isinstance(preserve_direction, bool):
+            raise TypeError("preserve_direction must be a bool")
         if embed_nodes and values:
             self.compute_embeddings(
                 values,
@@ -406,6 +411,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 chunk_key=chunk_key,
                 parallel_edge_policy=parallel_edge_policy,
                 nbits=nbits,
+                preserve_direction=preserve_direction,
             )
             for value in values
         ]
@@ -419,6 +425,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         chunk_key: str = "chunk_id",
         parallel_edge_policy: str = "combine",
         nbits: int = 14,
+        preserve_direction: bool = True,
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> list[Any]:
@@ -433,6 +440,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 chunk_key=chunk_key,
                 parallel_edge_policy=parallel_edge_policy,
                 nbits=nbits,
+                preserve_direction=preserve_direction,
                 node_text_fn=node_text_fn,
                 batch_size=batch_size,
             )
