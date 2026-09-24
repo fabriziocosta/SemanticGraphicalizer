@@ -1,5 +1,43 @@
 # TODO: Aesop AbstractGraph Embedding and Clustering Experiment
 
+## Current implementation status
+
+The main code and notebook workflow are implemented. The remaining work is to
+run and inspect the experiment; a complete API-backed run and its results have
+not yet been verified or recorded.
+
+### Implemented
+
+- `notebooks/aesop_graph_embeddings_clustering.ipynb` supports full-corpus and
+  three-tale smoke modes, checkpoints traces and direct-text vectors, and
+  compares AbstractGraph vectors with a direct-text baseline.
+- AbstractGraph conversion is available through the low-level functions and
+  `SemanticGraphicalizer.to_abstract_graph`, `to_abstract_graphs`, and
+  `transform_abstract` methods. Embeddings are optional and source vectors
+  stored under `embedding` are mapped to AbstractGraph's base-node `attribute`.
+- AbstractGraph core `AbstractGraphTransformer` batch-vectorizes pre-built
+  AbstractGraphs, preserving their attribute functions and returning one sparse
+  graph-level row per input.
+- The base graph retains reified nodes. Its discrete node label is the
+  relation name (empty for nodes without a relation); entity types label the
+  interpretation nodes. Argument roles label base edges. Text is not used as
+  a discrete label.
+- Conversion preserves directedness by default, can produce an undirected
+  base graph, and combines parallel argument edges by default while retaining
+  their records. Chunk provenance determines interpretation groups, with a
+  document-level fallback.
+- Focused adapter tests cover conversion, grouping, edge policies, embedding
+  reuse and dimension handling, stable vector width, and lazy optional
+  dependency loading.
+
+### Remaining
+
+- Run the notebook in three-tale smoke mode, then run the full API-backed
+  experiment. Review the saved manifest, metrics, and data quality, then add
+  interpretation notes for the selected run.
+- Review cluster representatives, nearest tales, and boundary cases before
+  drawing conclusions about graph-versus-text clustering.
+
 ## Objective
 
 Process the complete cached Aesop corpus, construct a recursive semantic graph
@@ -13,13 +51,12 @@ not included in either the node embedding inputs or the direct-text baseline.
 
 ## Deliverables
 
-- `notebooks/aesop_graph_embeddings_clustering.ipynb`, runnable in full and
-  small-corpus modes with checkpointed traces and embeddings.
-- An optional SemanticGraphicalizer adapter for `abstractgraph.AbstractGraph`
+- [x] `notebooks/aesop_graph_embeddings_clustering.ipynb` with full and
+  small-corpus modes and checkpointed traces and embeddings.
+- [x] Optional SemanticGraphicalizer adapter for `abstractgraph.AbstractGraph`
   with on-demand node embedding.
-- Focused offline tests using deterministic model and embedding clients.
-- Cached experiment artifacts under `data/processed/`, excluded from version
-  control.
+- [x] Focused offline tests using deterministic model and embedding clients.
+- [ ] Run outputs under `data/processed/`, excluded from version control.
 
 ## Experiment design
 
@@ -58,8 +95,9 @@ not included in either the node embedding inputs or the direct-text baseline.
 
 - Create one AbstractGraph per tale with the existing sum attribute aggregation
   and hash-based interpretation labels.
-- Convert `AbstractGraph.to_array()` to one sparse tale vector by summing its
-  base-node rows. Keep the sparse representation through scaling and clustering.
+- Use `AbstractGraphTransformer` to batch-vectorize the pre-built per-tale
+  AbstractGraphs, preserving their attribute functions and sparse graph-level
+  rows through scaling and clustering.
 - Embed the complete tale text separately for a direct-text baseline. Split
   long tales into deterministic 6,000-character, word-boundary chunks, embed
   those chunks, then mean-pool their vectors. This baseline does not use graph
