@@ -344,6 +344,72 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             nbits=nbits,
         )
 
+    def to_abstract_graphs(
+        self,
+        graphs_or_traces: Iterable[nx.MultiDiGraph | DocumentTrace],
+        *,
+        embed_nodes: bool = False,
+        embedding_key: str = "embedding",
+        chunk_key: str = "chunk_id",
+        parallel_edge_policy: str = "combine",
+        nbits: int = 14,
+        node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
+        batch_size: int = 128,
+    ) -> list[Any]:
+        """Convert multiple semantic graphs or traces to AbstractGraphs.
+
+        When ``embed_nodes=True``, node embeddings are computed across all
+        inputs in batches before conversion. Results preserve input order.
+        """
+
+        if isinstance(graphs_or_traces, (str, bytes)):
+            raise TypeError("graphs_or_traces must contain MultiDiGraph or DocumentTrace objects")
+        try:
+            values = list(graphs_or_traces)
+        except TypeError as exc:
+            raise TypeError("graphs_or_traces must be an iterable of MultiDiGraph or DocumentTrace objects") from exc
+
+        for value in values:
+            if isinstance(value, DocumentTrace):
+                graph = value.graph
+            elif isinstance(value, nx.MultiDiGraph):
+                graph = value
+            else:
+                raise TypeError("graphs_or_traces must contain only MultiDiGraph or DocumentTrace objects")
+            if not isinstance(graph, nx.MultiDiGraph):
+                raise TypeError("each input graph must be a NetworkX MultiDiGraph")
+
+        if not isinstance(embed_nodes, bool):
+            raise TypeError("embed_nodes must be a bool")
+        if not isinstance(embedding_key, str) or not embedding_key:
+            raise ValueError("embedding_key must be a non-empty string")
+        if not isinstance(chunk_key, str) or not chunk_key:
+            raise ValueError("chunk_key must be a non-empty string")
+        if parallel_edge_policy not in {"combine", "error"}:
+            raise ValueError("parallel_edge_policy must be 'combine' or 'error'")
+        if isinstance(nbits, bool) or not isinstance(nbits, int) or nbits < 1:
+            raise ValueError("nbits must be a positive integer")
+        if embed_nodes and values:
+            self.compute_embeddings(
+                values,
+                embedding_attribute=embedding_key,
+                node_text_fn=node_text_fn,
+                batch_size=batch_size,
+                skip_matching=True,
+            )
+
+        return [
+            self.to_abstract_graph(
+                value,
+                embed_nodes=False,
+                embedding_key=embedding_key,
+                chunk_key=chunk_key,
+                parallel_edge_policy=parallel_edge_policy,
+                nbits=nbits,
+            )
+            for value in values
+        ]
+
     def transform_abstract(
         self,
         X: Iterable[str],

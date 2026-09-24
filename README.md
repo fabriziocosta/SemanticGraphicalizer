@@ -140,6 +140,14 @@ matrix = abstract.to_array()
 story_vector = matrix.sum(axis=0)
 ```
 
+Convert multiple existing graphs or traces in input order with
+`to_abstract_graphs`. When `embed_nodes=True`, node texts from the full input
+collection are embedded in batches before conversion:
+
+```python
+abstract_graphs = graphicalizer.to_abstract_graphs(traces, embed_nodes=True)
+```
+
 `embed_nodes` defaults to `False`, so conversion does not make embedding API
 requests unless requested. Matching vectors are reused when their text and
 embedding configuration are unchanged. Direct conversion helpers are also

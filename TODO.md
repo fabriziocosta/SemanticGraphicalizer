@@ -1,4 +1,4 @@
-# Plan: Aesop AbstractGraph Embedding and Clustering Experiment
+# TODO: Aesop AbstractGraph Embedding and Clustering Experiment
 
 ## Objective
 
