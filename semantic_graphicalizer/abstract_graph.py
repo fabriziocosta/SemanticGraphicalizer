@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from textwrap import wrap
 from typing import Any, Literal
 
 import networkx as nx
@@ -92,6 +93,19 @@ def _base_graph(
                 "semantic_attributes": dict(semantic_attributes),
             }
         )
+        mentions = data.get("mentions", semantic_attributes.get("mentions", []))
+        if isinstance(mentions, (list, tuple)):
+            mentions = mentions[0] if mentions else None
+        display_text = (
+            data.get("relation")
+            or data.get("source_text")
+            or semantic_attributes.get("source_text")
+            or mentions
+            or data.get("id", node_id)
+        )
+        node_data["display_label"] = "\n".join(
+            wrap(f"{data.get('type')}: {display_text}", width=26, max_lines=3, placeholder="…")
+        )
         base.add_node(node_id, **node_data)
 
     dimensions = {vector.shape[0] for vector in vectors.values()}
@@ -147,6 +161,11 @@ def semantic_graph_to_abstract_graph(
 ) -> Any:
     """Convert a canonical semantic ``MultiDiGraph`` to an ``AbstractGraph``.
 
+    The base graph retains the reified semantic nodes and directed argument
+    edges. Since AbstractGraph accepts only simple graphs, parallel edges with
+    the same direction and endpoints are combined; their original records are
+    retained in the edge's ``semantic_edges`` attribute.
+
     Existing node embeddings are mapped to base-node real-valued attributes.
     This low-level converter never requests embeddings; use
     ``SemanticGraphicalizer.to_abstract_graph(..., embed_nodes=True)`` to
@@ -194,6 +213,7 @@ def semantic_graph_to_abstract_graph(
 
     for (scope, scope_id, entity_type), node_ids in groups.items():
         chunk_id = scope_id if scope == "chunk" else None
+        interpretation_node_id = abstract.interpretation_graph.number_of_nodes()
         abstract.create_interpretation_node_with_subgraph_from_nodes(
             node_ids,
             meta={
@@ -203,6 +223,11 @@ def semantic_graph_to_abstract_graph(
                 "document_id": resolved_document_id,
             },
         )
+        interpretation_data = abstract.interpretation_graph.nodes[interpretation_node_id]
+        # Keep the semantic label stable across documents and chunks. Scope
+        # identifiers remain available in ``meta`` for provenance.
+        interpretation_data["label"] = entity_type
+        interpretation_data["display_label"] = entity_type
     return abstract
 
 
