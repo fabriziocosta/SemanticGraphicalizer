@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from textwrap import wrap
 from typing import Any, Literal
 
 import networkx as nx
@@ -89,22 +88,9 @@ def _base_graph(
                 "id": data.get("id", node_id),
                 "type": data.get("type"),
                 "relation": data.get("relation"),
-                "label": data.get("relation"),
+                "label": data.get("relation") or "",
                 "semantic_attributes": dict(semantic_attributes),
             }
-        )
-        mentions = data.get("mentions", semantic_attributes.get("mentions", []))
-        if isinstance(mentions, (list, tuple)):
-            mentions = mentions[0] if mentions else None
-        display_text = (
-            data.get("relation")
-            or data.get("source_text")
-            or semantic_attributes.get("source_text")
-            or mentions
-            or data.get("id", node_id)
-        )
-        node_data["display_label"] = "\n".join(
-            wrap(f"{data.get('type')}: {display_text}", width=26, max_lines=3, placeholder="…")
         )
         base.add_node(node_id, **node_data)
 

@@ -69,7 +69,7 @@ def test_adapter_maps_semantic_labels_metadata_and_chunk_groups():
     base = abstract.base_graph
 
     assert base.is_directed()
-    assert base.nodes["fox"]["label"] is None
+    assert base.nodes["fox"]["label"] == ""
     assert base.nodes["r1"]["label"] == "chases"
     assert base.nodes["r1"]["semantic_attributes"]["confidence"] == 0.9
     assert base.nodes["fox"]["attribute"].tolist() == [1.0, 2.0]

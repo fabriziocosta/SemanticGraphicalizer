@@ -208,13 +208,18 @@ def _annotate_parallel_links(links: list[dict[str, Any]]) -> None:
 
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for link in links:
-        groups[(str(link["source"]), str(link["target"]))].append(link)
+        source = str(link["source"])
+        target = str(link["target"])
+        groups[tuple(sorted((source, target)))].append(link)
     for group in groups.values():
         if len(group) < 2:
             continue
         for index, link in enumerate(group):
             link["parallel_index"] = index
             link["parallel_count"] = len(group)
+            link["parallel_direction"] = (
+                1 if str(link["source"]) <= str(link["target"]) else -1
+            )
 
 
 def graph_to_text(
@@ -686,7 +691,7 @@ def _d3_script(
     const count = Number(d.parallel_count || 1);
     const index = Number(d.parallel_index || 0);
     const parallelCurvature = count > 1
-      ? (index - (count - 1) / 2) * parallelEdgeSpacing
+      ? (index - (count - 1) / 2) * parallelEdgeSpacing * Number(d.parallel_direction || 1)
       : 0;
     const controlX = (d.source.x + d.target.x) / 2 + normalX * parallelCurvature;
     const controlY = (d.source.y + d.target.y) / 2 + normalY * parallelCurvature;
@@ -1094,7 +1099,9 @@ def graph_to_static_svg(
         count = int(link.get("parallel_count", 1))
         index = int(link.get("parallel_index", 0))
         parallel_curvature = (
-            (index - (count - 1) / 2) * parallel_edge_spacing
+            (index - (count - 1) / 2)
+            * parallel_edge_spacing
+            * int(link.get("parallel_direction", 1))
             if count > 1
             else 0.0
         )
