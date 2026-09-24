@@ -65,7 +65,9 @@ def make_graphicalizer(embedder=None):
 
 
 def test_adapter_maps_semantic_labels_metadata_and_chunk_groups():
-    abstract = semantic_graph_to_abstract_graph(graph_with_chunks(), nbits=4)
+    abstract = semantic_graph_to_abstract_graph(
+        graph_with_chunks(), nbits=4, interpretation_mode="by_chunk_and_type"
+    )
     base = abstract.base_graph
 
     assert base.is_directed()
@@ -105,7 +107,9 @@ def test_document_scope_fallback_and_trace_entry_point():
     graph.add_node("two", id="two", type="Character", relation=None, attributes={})
     trace = DocumentTrace("doc", "text", [], [], [], [], [], graph)
 
-    abstract = trace_to_abstract_graph(trace, nbits=4)
+    abstract = trace_to_abstract_graph(
+        trace, nbits=4, interpretation_mode="by_chunk_and_type"
+    )
     assert abstract.interpretation_graph.number_of_nodes() == 1
     data = next(iter(abstract.interpretation_graph.nodes(data=True)))[1]
     assert data["meta"] == {

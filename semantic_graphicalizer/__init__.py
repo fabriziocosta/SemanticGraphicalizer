@@ -33,7 +33,11 @@ from .pipeline import (
     SemanticPipeline,
 )
 from .transformer import SemanticGraphicalizer
-from .abstract_graph import semantic_graph_to_abstract_graph, trace_to_abstract_graph
+from .abstract_graph import (
+    InterpretationMode,
+    semantic_graph_to_abstract_graph,
+    trace_to_abstract_graph,
+)
 from .types import (
     Argument,
     Chunk,
@@ -90,6 +94,7 @@ __all__ = [
     "PromptConfig",
     "PromptStage",
     "RelationInstance",
+    "InterpretationMode",
     "SemanticGraphicalizer",
     "semantic_graph_to_abstract_graph",
     "trace_to_abstract_graph",

@@ -13,7 +13,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
-from .abstract_graph import semantic_graph_to_abstract_graph
+from .abstract_graph import InterpretationMode, semantic_graph_to_abstract_graph
 from .model import (
     DEFAULT_OPENAI_EMBEDDING_MODEL,
     EmbeddingClient,
@@ -312,13 +312,16 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         parallel_edge_policy: str = "combine",
         nbits: int = 14,
         preserve_direction: bool = True,
+        interpretation_mode: InterpretationMode = "per_entity",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> Any:
         """Convert a semantic graph or trace to an optional AbstractGraph.
 
         Set ``embed_nodes=True`` to compute missing or stale node text embeddings
-        before conversion. Matching embeddings are reused.
+        before conversion. Matching embeddings are reused. By default, each
+        semantic node maps to a distinct interpretation node; set
+        ``interpretation_mode="by_chunk_and_type"`` to group them as before.
         """
 
         if isinstance(graph_or_trace, DocumentTrace):
@@ -329,6 +332,11 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise TypeError("graph_or_trace must be a MultiDiGraph or DocumentTrace")
         if not isinstance(embed_nodes, bool):
             raise TypeError("embed_nodes must be a bool")
+        if not isinstance(interpretation_mode, str) or interpretation_mode not in {
+            "per_entity",
+            "by_chunk_and_type",
+        }:
+            raise ValueError("interpretation_mode must be 'per_entity' or 'by_chunk_and_type'")
         if embed_nodes:
             self.compute_embeddings(
                 graph_or_trace,
@@ -344,6 +352,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             parallel_edge_policy=parallel_edge_policy,
             nbits=nbits,
             preserve_direction=preserve_direction,
+            interpretation_mode=interpretation_mode,
         )
 
     def to_abstract_graphs(
@@ -356,13 +365,15 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         parallel_edge_policy: str = "combine",
         nbits: int = 14,
         preserve_direction: bool = True,
+        interpretation_mode: InterpretationMode = "per_entity",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> list[Any]:
         """Convert multiple semantic graphs or traces to AbstractGraphs.
 
         When ``embed_nodes=True``, node embeddings are computed across all
-        inputs in batches before conversion. Results preserve input order.
+        inputs in batches before conversion. ``interpretation_mode`` is applied
+        to every result. Results preserve input order.
         """
 
         if isinstance(graphs_or_traces, (str, bytes)):
@@ -394,6 +405,11 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise ValueError("nbits must be a positive integer")
         if not isinstance(preserve_direction, bool):
             raise TypeError("preserve_direction must be a bool")
+        if not isinstance(interpretation_mode, str) or interpretation_mode not in {
+            "per_entity",
+            "by_chunk_and_type",
+        }:
+            raise ValueError("interpretation_mode must be 'per_entity' or 'by_chunk_and_type'")
         if embed_nodes and values:
             self.compute_embeddings(
                 values,
@@ -412,6 +428,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 parallel_edge_policy=parallel_edge_policy,
                 nbits=nbits,
                 preserve_direction=preserve_direction,
+                interpretation_mode=interpretation_mode,
             )
             for value in values
         ]
@@ -426,10 +443,15 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         parallel_edge_policy: str = "combine",
         nbits: int = 14,
         preserve_direction: bool = True,
+        interpretation_mode: InterpretationMode = "per_entity",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> list[Any]:
-        """Transform documents directly into AbstractGraph objects."""
+        """Transform documents directly into AbstractGraph objects.
+
+        ``interpretation_mode`` selects per-entity mappings or the legacy
+        chunk-and-type grouping for each returned graph.
+        """
 
         traces = self.transform_with_trace(X)
         return [
@@ -441,6 +463,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 parallel_edge_policy=parallel_edge_policy,
                 nbits=nbits,
                 preserve_direction=preserve_direction,
+                interpretation_mode=interpretation_mode,
                 node_text_fn=node_text_fn,
                 batch_size=batch_size,
             )

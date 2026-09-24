@@ -20,8 +20,10 @@ not yet been verified or recorded.
   graph-level row per input.
 - The base graph retains reified nodes. Its discrete node label is the
   relation name (empty for nodes without a relation); entity types label the
-  interpretation nodes. Argument roles label base edges. Text is not used as
-  a discrete label.
+  interpretation nodes. `per_entity` is the default interpretation mode,
+  mapping one base node to each interpretation node; `by_chunk_and_type`
+  retains the earlier grouped behavior. Argument roles label base edges.
+  Text is not used as a discrete label.
 - Conversion preserves directedness by default, can produce an undirected
   base graph, and combines parallel argument edges by default while retaining
   their records. Chunk provenance determines interpretation groups, with a

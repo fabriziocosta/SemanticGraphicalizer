@@ -12,6 +12,7 @@ from .types import DocumentTrace
 
 
 ParallelEdgePolicy = Literal["combine", "error"]
+InterpretationMode = Literal["per_entity", "by_chunk_and_type"]
 
 
 def _abstractgraph_types() -> tuple[type, Any]:
@@ -144,6 +145,7 @@ def semantic_graph_to_abstract_graph(
     nbits: int = 14,
     document_id: str | None = None,
     preserve_direction: bool = True,
+    interpretation_mode: InterpretationMode = "per_entity",
 ) -> Any:
     """Convert a canonical semantic ``MultiDiGraph`` to an ``AbstractGraph``.
 
@@ -151,6 +153,10 @@ def semantic_graph_to_abstract_graph(
     edges. Since AbstractGraph accepts only simple graphs, parallel edges with
     the same direction and endpoints are combined; their original records are
     retained in the edge's ``semantic_edges`` attribute.
+
+    By default, each base node maps to its own interpretation node labeled by
+    semantic entity type. Set ``interpretation_mode="by_chunk_and_type"`` to
+    retain the previous behavior of grouping nodes by chunk and entity type.
 
     Existing node embeddings are mapped to base-node real-valued attributes.
     This low-level converter never requests embeddings; use
@@ -170,6 +176,11 @@ def semantic_graph_to_abstract_graph(
         raise ValueError("nbits must be a positive integer")
     if not isinstance(preserve_direction, bool):
         raise TypeError("preserve_direction must be a bool")
+    if not isinstance(interpretation_mode, str) or interpretation_mode not in {
+        "per_entity",
+        "by_chunk_and_type",
+    }:
+        raise ValueError("interpretation_mode must be 'per_entity' or 'by_chunk_and_type'")
 
     AbstractGraph, sum_attribute_function = _abstractgraph_types()
     base = _base_graph(
@@ -181,7 +192,7 @@ def semantic_graph_to_abstract_graph(
     abstract = AbstractGraph(graph=base, nbits=nbits, attribute_function=sum_attribute_function)
     resolved_document_id = _document_id(graph, document_id)
 
-    groups: dict[tuple[str, str | None, str | None], list[Any]] = {}
+    entities: list[tuple[Any, str, list[str]]] = []
     for node_id, data in graph.nodes(data=True):
         entity_type = data.get("type")
         if not isinstance(entity_type, str) or not entity_type:
@@ -191,27 +202,54 @@ def semantic_graph_to_abstract_graph(
             chunk_id = provenance.get(chunk_key)
             if isinstance(chunk_id, str) and chunk_id and chunk_id not in chunks:
                 chunks.append(chunk_id)
-        if chunks:
-            for chunk_id in chunks:
-                groups.setdefault(("chunk", chunk_id, entity_type), []).append(node_id)
-        else:
-            groups.setdefault(("document", resolved_document_id, entity_type), []).append(node_id)
+        entities.append((node_id, entity_type, chunks))
 
-    for (scope, scope_id, entity_type), node_ids in groups.items():
-        chunk_id = scope_id if scope == "chunk" else None
+    if interpretation_mode == "per_entity":
+        interpretation_groups = [
+            (
+                [node_id],
+                entity_type,
+                {
+                    "source_function": "semantic_entity_type",
+                    "entity_type": entity_type,
+                    "entity_id": node_id,
+                    "chunk_id": chunks[0] if len(chunks) == 1 else None,
+                    "chunk_ids": chunks,
+                    "document_id": resolved_document_id,
+                },
+            )
+            for node_id, entity_type, chunks in entities
+        ]
+    else:
+        groups: dict[tuple[str, str | None, str], list[Any]] = {}
+        for node_id, entity_type, chunks in entities:
+            if chunks:
+                for chunk_id in chunks:
+                    groups.setdefault(("chunk", chunk_id, entity_type), []).append(node_id)
+            else:
+                groups.setdefault(("document", resolved_document_id, entity_type), []).append(node_id)
+        interpretation_groups = [
+            (
+                node_ids,
+                entity_type,
+                {
+                    "source_function": "semantic_entity_type",
+                    "entity_type": entity_type,
+                    "chunk_id": scope_id if scope == "chunk" else None,
+                    "document_id": resolved_document_id,
+                },
+            )
+            for (scope, scope_id, entity_type), node_ids in groups.items()
+        ]
+
+    for node_ids, entity_type, meta in interpretation_groups:
         interpretation_node_id = abstract.interpretation_graph.number_of_nodes()
         abstract.create_interpretation_node_with_subgraph_from_nodes(
             node_ids,
-            meta={
-                "source_function": "semantic_entity_type",
-                "entity_type": entity_type,
-                "chunk_id": chunk_id,
-                "document_id": resolved_document_id,
-            },
+            meta=meta,
         )
         interpretation_data = abstract.interpretation_graph.nodes[interpretation_node_id]
-        # Keep the semantic label stable across documents and chunks. Scope
-        # identifiers remain available in ``meta`` for provenance.
+        # Entity type is the stable label; entity/chunk identifiers stay in meta.
         interpretation_data["label"] = entity_type
         interpretation_data["display_label"] = entity_type
     return abstract
@@ -225,6 +263,7 @@ def trace_to_abstract_graph(
     parallel_edge_policy: ParallelEdgePolicy = "combine",
     nbits: int = 14,
     preserve_direction: bool = True,
+    interpretation_mode: InterpretationMode = "per_entity",
 ) -> Any:
     """Convert a trace's semantic graph to an ``AbstractGraph``."""
 
@@ -238,4 +277,5 @@ def trace_to_abstract_graph(
         nbits=nbits,
         document_id=trace.document_id,
         preserve_direction=preserve_direction,
+        interpretation_mode=interpretation_mode,
     )
