@@ -94,6 +94,15 @@ def test_loader_rejects_invalid_limit(tmp_path) -> None:
         load_aesop_fables(limit=0, cache_dir=tmp_path)
 
 
+def test_loader_can_return_complete_cached_collection(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "semantic_graphicalizer.aesop.urlopen",
+        lambda request, timeout: FakeResponse(gutenberg_fixture()),
+    )
+    stories = load_aesop_fables(limit=None, cache_dir=tmp_path)
+    assert len(stories) == 3
+
+
 def test_loader_can_select_a_reproducible_random_subset(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "semantic_graphicalizer.aesop.urlopen",

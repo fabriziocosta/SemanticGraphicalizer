@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from hashlib import sha256
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
+from .abstract_graph import semantic_graph_to_abstract_graph
 from .model import (
     DEFAULT_OPENAI_EMBEDDING_MODEL,
     EmbeddingClient,
@@ -188,6 +190,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         embedding_attribute: str = "embedding",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
+        skip_matching: bool = False,
     ) -> list[DocumentTrace | nx.Graph]:
         """Compute and attach one text embedding to every graph node.
 
@@ -200,8 +203,43 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise ValueError("embedding_attribute must be a non-empty string")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
+        if not isinstance(skip_matching, bool):
+            raise TypeError("skip_matching must be a bool")
         targets = self._embedding_targets(values)
         text_builder = node_text_fn or self._default_node_embedding_text
+        provider = self.embedder
+        model_id = (
+            self.embedding_model
+            if provider is None
+            else getattr(provider, "model", f"{type(provider).__module__}.{type(provider).__qualname__}")
+        )
+        provider_function = getattr(provider, "function", None) if provider is not None else None
+        provider_request_options = getattr(provider, "request_options", {}) if provider is not None else {}
+        provider_settings = {
+            "provider": f"{type(provider).__module__}.{type(provider).__qualname__}" if provider is not None else "openai",
+            "model": str(model_id),
+            "request_options": dict(provider_request_options) if isinstance(provider_request_options, Mapping) else {},
+            "cache_key": getattr(provider, "cache_key", None) if provider is not None else None,
+        }
+        if callable(provider_function):
+            provider_settings["function"] = (
+                f"{getattr(provider_function, '__module__', '')}."
+                f"{getattr(provider_function, '__qualname__', type(provider_function).__qualname__)}"
+            )
+        builder_id = "default-node-text-v1"
+        if node_text_fn is not None:
+            builder_id = f"{getattr(node_text_fn, '__module__', '')}.{getattr(node_text_fn, '__qualname__', type(node_text_fn).__qualname__)}"
+        config_digest = sha256(
+            json.dumps(
+                {
+                    "provider": provider_settings,
+                    "text_builder": builder_id,
+                    "embedding_attribute": embedding_attribute,
+                },
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
         records: list[tuple[nx.Graph, Any, str]] = []
         for value in targets:
             graph = value.graph if isinstance(value, DocumentTrace) else value
@@ -209,6 +247,21 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 text = text_builder(node_id, data)
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError(f"node_text_fn returned empty text for node '{node_id}'")
+                if skip_matching and embedding_attribute in data:
+                    metadata = data.get("embedding_metadata")
+                    text_digest = sha256(text.encode("utf-8")).hexdigest()
+                    try:
+                        existing = [float(component) for component in data[embedding_attribute]]
+                    except (TypeError, ValueError):
+                        existing = []
+                    if (
+                        isinstance(metadata, Mapping)
+                        and metadata.get("config_hash") == config_digest
+                        and metadata.get("text_sha256") == text_digest
+                        and metadata.get("dimension") == len(existing)
+                        and bool(existing)
+                    ):
+                        continue
                 records.append((graph, node_id, text))
         if not records:
             return targets
@@ -223,13 +276,13 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             client = as_embedding_client(raw_client)
             self.embedding_client_ = client
 
-        pending: list[tuple[nx.Graph, Any, list[float]]] = []
+        pending: list[tuple[nx.Graph, Any, list[float], str]] = []
         for start in range(0, len(records), batch_size):
             batch = records[start:start + batch_size]
             vectors = list(client.embed([text for _graph, _node_id, text in batch]))
             if len(vectors) != len(batch):
                 raise ValueError("embedder returned a different number of vectors than node texts")
-            for (graph, node_id, _text), vector in zip(batch, vectors):
+            for (graph, node_id, text), vector in zip(batch, vectors):
                 if isinstance(vector, (str, bytes)) or not isinstance(vector, Sequence):
                     raise ValueError(f"embedder returned an invalid vector for node '{node_id}'")
                 try:
@@ -238,10 +291,87 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                     raise ValueError(f"embedder returned an invalid vector for node '{node_id}'") from exc
                 if not values_as_float:
                     raise ValueError(f"embedder returned an empty vector for node '{node_id}'")
-                pending.append((graph, node_id, values_as_float))
-        for graph, node_id, vector in pending:
+                pending.append((graph, node_id, values_as_float, text))
+        for graph, node_id, vector, text in pending:
             graph.nodes[node_id][embedding_attribute] = vector
+            graph.nodes[node_id]["embedding_metadata"] = {
+                "model": str(model_id),
+                "config_hash": config_digest,
+                "text_sha256": sha256(text.encode("utf-8")).hexdigest(),
+                "dimension": len(vector),
+            }
         return targets
+
+    def to_abstract_graph(
+        self,
+        graph_or_trace: nx.MultiDiGraph | DocumentTrace,
+        *,
+        embed_nodes: bool = False,
+        embedding_key: str = "embedding",
+        chunk_key: str = "chunk_id",
+        parallel_edge_policy: str = "combine",
+        nbits: int = 14,
+        node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
+        batch_size: int = 128,
+    ) -> Any:
+        """Convert a semantic graph or trace to an optional AbstractGraph.
+
+        Set ``embed_nodes=True`` to compute missing or stale node text embeddings
+        before conversion. Matching embeddings are reused.
+        """
+
+        if isinstance(graph_or_trace, DocumentTrace):
+            graph = graph_or_trace.graph
+        elif isinstance(graph_or_trace, nx.MultiDiGraph):
+            graph = graph_or_trace
+        else:
+            raise TypeError("graph_or_trace must be a MultiDiGraph or DocumentTrace")
+        if not isinstance(embed_nodes, bool):
+            raise TypeError("embed_nodes must be a bool")
+        if embed_nodes:
+            self.compute_embeddings(
+                graph_or_trace,
+                embedding_attribute=embedding_key,
+                node_text_fn=node_text_fn,
+                batch_size=batch_size,
+                skip_matching=True,
+            )
+        return semantic_graph_to_abstract_graph(
+            graph,
+            embedding_key=embedding_key,
+            chunk_key=chunk_key,
+            parallel_edge_policy=parallel_edge_policy,
+            nbits=nbits,
+        )
+
+    def transform_abstract(
+        self,
+        X: Iterable[str],
+        *,
+        embed_nodes: bool = False,
+        embedding_key: str = "embedding",
+        chunk_key: str = "chunk_id",
+        parallel_edge_policy: str = "combine",
+        nbits: int = 14,
+        node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
+        batch_size: int = 128,
+    ) -> list[Any]:
+        """Transform documents directly into AbstractGraph objects."""
+
+        traces = self.transform_with_trace(X)
+        return [
+            self.to_abstract_graph(
+                trace,
+                embed_nodes=embed_nodes,
+                embedding_key=embedding_key,
+                chunk_key=chunk_key,
+                parallel_edge_policy=parallel_edge_policy,
+                nbits=nbits,
+                node_text_fn=node_text_fn,
+                batch_size=batch_size,
+            )
+            for trace in traces
+        ]
 
     def display(
         self,

@@ -1,223 +1,94 @@
-# Plan: Aesop Attributed-Graph Embedding and Clustering Experiment
+# Plan: Aesop AbstractGraph Embedding and Clustering Experiment
 
 ## Objective
 
-Create a reproducible notebook that processes the complete cached Aesop corpus,
-builds one recursive semantic graph per tale, computes text embeddings for graph
-nodes, converts each attributed graph into one fixed-length graph vector, and
-clusters the tales to test whether the resulting groups are semantically
-coherent.
+Process the complete cached Aesop corpus, construct a recursive semantic graph
+for each tale, optionally embed the text associated with each semantic node
+during AbstractGraph conversion, and cluster one AbstractGraph-derived vector
+per tale. Compare those clusters with a direct whole-tale text embedding
+baseline.
 
-The experiment should distinguish semantic signal from implementation artifacts:
-story titles, moral headings, and cluster labels may be used for interpretation
-and evaluation, but must not be included in the graph embeddings used for
-clustering.
+The experiment keeps titles and moral headings as evaluation metadata. They are
+not included in either the node embedding inputs or the direct-text baseline.
 
 ## Deliverables
 
-- `notebooks/aesop_graph_embeddings_clustering.ipynb`
-  - executable from top to bottom;
-  - explains each experiment decision and displays intermediate artifacts;
-  - uses cached inputs and checkpointed outputs where possible.
-- A reusable attributed-graph vectorizer in the package, preferably exposed as
-  `AttributedGraphVectorizer`.
-- Tests for graph vectorization, batching, empty/sparse graphs, and stable
-  feature dimensions.
-- Optional cached experiment artifacts outside version control:
-  - corpus metadata;
-  - serialized traces/graphs with node embeddings;
-  - graph-level vectors and cluster assignments;
-  - experiment configuration and corpus/model hashes.
+- `notebooks/aesop_graph_embeddings_clustering.ipynb`, runnable in full and
+  small-corpus modes with checkpointed traces and embeddings.
+- An optional SemanticGraphicalizer adapter for `abstractgraph.AbstractGraph`
+  with on-demand node embedding.
+- Focused offline tests using deterministic model and embedding clients.
+- Cached experiment artifacts under `data/processed/`, excluded from version
+  control.
 
 ## Experiment design
 
-### 1. Corpus and metadata
+### Corpus and semantic graphs
 
-- Load the complete cached corpus with `load_aesop_fables`, rather than a random
-  sample.
-- Assign stable tale IDs derived from source order and a content hash.
-- Keep a metadata table with tale ID, title, character count, word count, and
-  source text hash.
-- Treat title/moral text as evaluation metadata only. Do not feed it to the
-  node-text embedder unless it is genuinely part of the graph node evidence.
-- Record the exact corpus cache path, source URL, extraction count, and date of
-  the run.
+- Load the complete parsed cache with `load_aesop_fables(limit=None)`; use a
+  configurable small limit in smoke mode.
+- Assign stable tale IDs from source order and a content hash. Keep title,
+  character count, word count, and source hash as evaluation metadata.
+- Run `transform_with_trace` for each tale and preserve the canonical recursive
+  `MultiDiGraph` as the input to the adapter. Checkpoint each completed trace so
+  a failed model request can resume without reprocessing earlier tales.
 
-### 2. Graph construction
+### AbstractGraph conversion and node embeddings
 
-- Instantiate `SemanticGraphicalizer` with the Aesop ontology and prompts.
-- Run `transform_with_trace` for every tale so both the trace and canonical
-  recursive `MultiDiGraph` are available.
-- Preserve reified relation nodes and argument-role edges as the primary graph
-  representation. This is important because relations can point to other
-  relations.
-- Keep a projected binary graph as an explicit ablation using
-  `project_binary_relations`; do not silently replace the recursive graph.
-- Add checkpointing after each completed tale or batch so a failed API request
-  does not require restarting the full corpus.
+- Provide `semantic_graph_to_abstract_graph(...)` and
+  `trace_to_abstract_graph(...)`, plus `SemanticGraphicalizer.to_abstract_graph`
+  and `transform_abstract` convenience methods.
+- Conversion uses entity `relation` as the base-node label, argument `role` as
+  the base-edge label, and provenance plus `Entity.type` to create local
+  interpretation nodes. If chunk provenance is absent, group at document scope.
+- Embedding is opt-in with `embed_nodes=False` by default. When enabled,
+  generate vectors from the existing node-text policy, reuse vectors only when
+  their text and embedding configuration match, and recompute missing or stale
+  vectors. Store the configuration and text hashes with each vector.
+- Validate one vector dimension per document conversion and zero-fill missing
+  node vectors when other vectors are present. If no vectors are present, omit
+  continuous base-node attributes.
+- Preserve semantic metadata when converting the `MultiDiGraph` to a directed
+  simple graph. Combine parallel argument roles deterministically by default;
+  offer an error policy for callers that disallow them.
+- Install AbstractGraph through the optional `abstractgraph` extra. Ordinary
+  SemanticGraphicalizer imports and graph processing must work without it.
 
-### 3. Node text embeddings
+### Graph and text representations
 
-- Call `compute_embeddings(traces)` using the default OpenAI text embedder.
-- Use the existing default node text policy: ontology type/relation plus node
-  mentions and available source text.
-- Store each vector at `graph.nodes[node_id]["embedding"]`.
-- Record the embedding model, dimensions, batch size, and number of embedded
-  nodes.
-- Support resume behavior by skipping nodes that already have an embedding with
-  the same model/configuration hash.
-- Keep an injectable deterministic fake embedder in tests; notebook execution
-  must not be required for the test suite.
+- Create one AbstractGraph per tale with the existing sum attribute aggregation
+  and hash-based interpretation labels.
+- Convert `AbstractGraph.to_array()` to one sparse tale vector by summing its
+  base-node rows. Keep the sparse representation through scaling and clustering.
+- Embed the complete tale text separately for a direct-text baseline. Split
+  long tales into deterministic 6,000-character, word-boundary chunks, embed
+  those chunks, then mean-pool their vectors. This baseline does not use graph
+  content.
+- Record embedding model, dimensions, source/configuration hashes, AbstractGraph
+  settings, and corpus hash with the run outputs.
 
-### 3b. Direct whole-tale text baseline
+### Clustering and interpretation
 
-- Compute one embedding directly from the complete text of each tale using the
-  same embedding provider and model family.
-- Exclude graph construction, node pooling, relation attributes, and structural
-  features from this baseline.
-- Use the direct tale vectors as a separate clustering input, with the same
-  standardization policy, random seeds, cluster-count sweep, and evaluation
-  metrics used for graph vectors.
-- Store the direct text vector and its input-text hash alongside the tale
-  metadata so the comparison is auditable.
-- If the complete tale exceeds the embedding model's input limit, use a defined
-  chunking policy and deterministic pooling, and report that policy explicitly.
+- Standardize the AbstractGraph sparse vectors and direct-text vectors
+  independently, then compare KMeans and agglomerative clustering over a small
+  range of cluster counts.
+- Report silhouette, Calinski-Harabasz, and Davies-Bouldin scores, cluster
+  sizes, PCA/SVD views, and representative tales. Treat internal scores as
+  diagnostics, not evidence of semantic validity by themselves.
+- Compare assignments with adjusted Rand index and normalized mutual
+  information. Inspect common entities, relation names, argument roles,
+  excerpts, and boundary cases. Use titles and morals only for this post-hoc
+  interpretation.
 
-### 4. Attributed-graph vectorization
+## Tests and acceptance
 
-Implement a reusable `AttributedGraphVectorizer` that maps one graph to one
-fixed-length vector. The vectorizer must preserve both node attributes and graph
-structure and must fit its vocabulary/statistics on the experiment collection.
-
-Use the following representations as explicit comparisons:
-
-1. **Node-attribute baseline**
-   - mean, standard deviation, and max pooling over node text embeddings;
-   - normalized graph size and relation-node proportion.
-
-2. **Symbolic attributed-graph representation**
-   - normalized counts for ontology node types;
-   - normalized counts for relation names, argument roles, and edge categories;
-   - structural features such as node/edge counts, density, in/out-degree
-     summaries, connected components, recursive relation depth, and cycle count;
-   - optional Weisfeiler-Lehman graph tokens with TF-IDF or a fitted hashing
-     representation.
-
-3. **Combined representation**
-   - concatenate the pooled text-embedding features and symbolic/structural
-     features;
-   - standardize numeric features before clustering;
-   - optionally apply PCA only after reporting the unreduced baseline.
-
-The notebook should compare canonical recursive graphs with projected binary
-graphs as an ablation. The vectorizer should make the graph view explicit in its
-configuration so the two experiments cannot be confused.
-
-### 5. Clustering
-
-- Run the same clustering workflow independently on:
-  - direct whole-tale text embeddings;
-  - node-attribute pooled graph vectors;
-  - symbolic/structural graph vectors;
-  - combined attributed-graph vectors;
-  - projected-binary graph vectors as an ablation.
-- Start with standardized vectors for each representation.
-- Evaluate a small range of `k` values with KMeans and agglomerative clustering.
-- Select candidate clusterings using silhouette, Calinski-Harabasz, and
-  Davies-Bouldin scores, but do not treat the best internal score as proof of
-  semantic validity.
-- Include PCA plots for visual inspection; use a fixed random seed.
-- Report cluster sizes and representative tales nearest to each centroid or
-  medoid.
-- If the dataset contains too many tiny or noisy clusters, compare a density or
-  hierarchical alternative rather than forcing an arbitrary `k`.
-
-### 6. Semantic-sense validation
-
-For each candidate clustering:
-
-- display representative tale titles and short source excerpts per cluster;
-- compare shared entities, relation types, argument roles, and graph motifs;
-- inspect nearest-neighbor tale pairs in graph-vector space;
-- compare against a text-only embedding baseline and a structure-only baseline;
-- compare cluster assignments directly across the whole-tale text baseline and
-  each graph representation using adjusted Rand index, normalized mutual
-  information, and a contingency/alignment table;
-- measure cluster stability under resampling, feature ablations, and random
-  seeds;
-- use titles/morals only as post-hoc human-readable validation signals;
-- manually inspect a few boundary cases and likely false positives.
-
-Success means that several clusters are interpretable through recurring themes,
-roles, mechanisms, or narrative structures, and that the combined graph view
-either improves semantic coherence over direct text clustering or reveals a
-useful complementary organization of the tales. If graph clustering merely
-duplicates the text baseline, that is still a meaningful result. A high
-silhouette score alone is not sufficient.
-
-## Notebook outline
-
-1. **Experiment configuration**
-   - paths, seeds, model names, batch sizes, clustering range, and cache policy;
-   - a visible warning that embeddings require `OPENAI_API_KEY` and incur API
-     usage.
-2. **Load and inspect the corpus**
-   - corpus count, length distribution, title examples, and hashes.
-3. **Build traces and canonical graphs**
-   - progress table, graph size distributions, and one recursive graph example.
-4. **Compute node embeddings**
-   - checkpoint/resume logic, embedding dimensions, and node-text examples.
-5. **Vectorize attributed graphs**
-   - feature counts, ablation configuration, and sanity checks on vector shapes.
-6. **Cluster graph vectors**
-   - metric sweep, selected configurations, cluster sizes, and PCA views for
-     every representation.
-7. **Compare direct text and graph clustering**
-   - side-by-side metrics, cluster alignment, nearest-neighbor overlap, and
-     examples where graph structure changes the assignment.
-8. **Interpret clusters**
-   - representative tales, common graph features, nearest neighbors, and
-     boundary cases.
-9. **Compare baselines and ablations**
-   - direct text, node-pooled, structure-only, combined, recursive, and
-     projected views.
-10. **Conclusions and limitations**
-   - whether semantic grouping is supported, what failed, and what to try next.
-
-## Reproducibility and cost controls
-
-- Never commit API keys, raw credentials, or large generated embeddings.
-- Use deterministic seeds for sampling, PCA, and clustering.
-- Persist configuration, package version, ontology/prompt hashes, corpus hash,
-  embedding model, and vectorizer settings with every result.
-- Make the notebook runnable in a small smoke-test mode, for example 3 tales,
-  before the full-corpus mode.
-- Cache model outputs and embeddings by content/configuration hash.
-- Make failures retryable and report which tales remain incomplete.
-- Separate data acquisition, graph extraction, embedding, vectorization, and
-  clustering outputs so each stage can be rerun independently.
-
-## Acceptance criteria
-
-- The notebook runs end-to-end in smoke-test mode without manual edits.
-- Full-corpus mode produces one trace/graph and one graph vector per tale.
-- Every embedded node has a vector of consistent dimension and provenance for
-  the embedding configuration.
-- Recursive and projected graph representations are compared explicitly.
-- Direct whole-tale text clustering is evaluated alongside at least three graph
-  representations and two clustering algorithms.
-- The notebook shows cluster metrics, representative tales, PCA plots, and
-  qualitative semantic inspection.
-- Results can be regenerated from the recorded configuration and cached inputs.
-- Tests pass without network access by using fake model and embedding clients.
-
-## Recommended implementation order
-
-- [ ] Add `AttributedGraphVectorizer` and its tests.
-- [ ] Add serialization/checkpoint helpers for traces, embeddings, and vectors.
-- [ ] Add a smoke-test notebook skeleton with synthetic/fake clients.
-- [ ] Wire the notebook to the cached Aesop corpus and real embeddings.
-- [ ] Add clustering, baseline, and recursive-vs-projected ablation sections.
-- [ ] Run the full experiment, inspect clusters, and record conclusions in the
-      notebook.
-- [ ] Update the README with the notebook workflow and artifact instructions.
+- Test semantic label and metadata preservation, chunk grouping and fallback,
+  overlapping memberships, parallel-edge policies, embedding opt-in, matching
+  vector reuse, stale vector refresh, missing-vector zero fill, and stable
+  summed-vector width.
+- Verify ordinary package import and graph transformation without the optional
+  dependency; run adapter tests with the dependency installed.
+- The notebook must run top-to-bottom in small-corpus mode, produce one trace,
+  one AbstractGraph, and one vector per selected tale, and compare graph and
+  text clustering. API-backed cells must clearly identify embedding costs.
+- Keep generated vectors, traces, and credentials out of version control.

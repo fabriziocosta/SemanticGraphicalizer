@@ -63,7 +63,7 @@ def _read_story_cache(path: Path) -> list[str] | None:
 
 
 def load_aesop_fables(
-    limit: int = 2,
+    limit: int | None = 2,
     *,
     cache_dir: str | Path = DEFAULT_AESOP_CACHE_DIR,
     refresh: bool = False,
@@ -72,6 +72,8 @@ def load_aesop_fables(
     rand_seed: int | None = None,
 ) -> list[str]:
     """Return up to ``limit`` Aesop stories as complete document strings.
+
+    Set ``limit=None`` to return the complete cached collection.
 
     By default, stories are returned in source order. Set
     ``select_at_random=True`` to sample the requested number from the complete
@@ -83,8 +85,8 @@ def load_aesop_fables(
     only when neither cache is available. Set ``refresh=True`` to rebuild both.
     """
 
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        raise ValueError("limit must be a positive integer")
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
+        raise ValueError("limit must be a positive integer or None")
     if not isinstance(select_at_random, bool):
         raise ValueError("select_at_random must be a boolean")
     if rand_seed is not None and (not isinstance(rand_seed, int) or isinstance(rand_seed, bool)):
@@ -93,6 +95,8 @@ def load_aesop_fables(
         raise ValueError("url must be a non-empty string")
 
     def select_stories(stories: list[str]) -> list[str]:
+        if limit is None:
+            return stories
         if not select_at_random:
             return stories[:limit]
         sampler = random.Random(rand_seed)

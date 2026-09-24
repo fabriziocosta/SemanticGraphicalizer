@@ -1,0 +1,105 @@
+name: microbiology-amr
+version: "1.0"
+terms:
+  - id: Organism
+    description: A microbial taxon or species.
+  - id: Strain
+    description: A laboratory or clinical bacterial strain.
+  - id: Population
+    description: A population of bacterial cells or evolved lineages.
+  - id: Gene
+    description: A genomic locus or coding sequence.
+  - id: Regulator
+    description: A regulatory protein or transcriptional regulator.
+  - id: Protein
+    description: A protein product or resistance enzyme.
+  - id: Mutation
+    description: A heritable sequence change.
+  - id: Pathway
+    description: A cellular biosynthetic or regulatory pathway.
+  - id: Antibiotic
+    description: An antibacterial compound used as selective pressure.
+  - id: Inhibitor
+    description: An adjuvant that inhibits a resistance mechanism.
+  - id: Phenotype
+    description: An observed susceptibility or resistance phenotype.
+  - id: Experiment
+    description: An experimental evolution or microbiology study.
+  - id: Proposition
+    description: A reified scientific assertion with typed arguments.
+argument_roles:
+  - id: subject
+    description: The entity carrying or undergoing a property.
+  - id: object
+    description: The entity affected or related to the subject.
+  - id: cause
+    description: The cause side of a causal assertion.
+  - id: effect
+    description: The effect side of a causal assertion.
+  - id: pressure
+    description: The antibiotic selection pressure.
+  - id: outcome
+    description: The selected outcome or phenotype.
+  - id: evidence
+    description: An experiment or result supporting a claim.
+  - id: claim
+    description: A scientific proposition supported by evidence.
+  - id: intervention
+    description: An inhibitor or treatment intervention.
+  - id: target
+    description: The mechanism, protein, or phenotype affected.
+  - id: experiment
+    description: The experiment performing an observation.
+relations:
+  has_factor:
+    description: A strain contains or carries a biological factor.
+    arguments:
+      subject: {cardinality: 1, allowed_types: [Strain, Organism]}
+      object: {cardinality: 1, allowed_types: [Gene, Regulator, Protein]}
+    projection: [subject, object]
+  belongs_to_pathway:
+    description: A mutation or molecular factor belongs to a cellular pathway.
+    arguments:
+      subject: {cardinality: 1, allowed_types: [Gene, Protein, Mutation]}
+      object: {cardinality: 1, allowed_types: [Pathway]}
+    projection: [subject, object]
+  causes:
+    description: A biological factor or proposition causes a downstream scientific effect.
+    arguments:
+      cause: {cardinality: 1, allowed_types: [Organism, Strain, Population, Gene, Regulator, Protein, Mutation, Pathway, Antibiotic, Inhibitor, Phenotype, Experiment, Proposition]}
+      effect: {cardinality: 1, allowed_types: [Organism, Strain, Population, Gene, Regulator, Protein, Mutation, Pathway, Antibiotic, Inhibitor, Phenotype, Experiment, Proposition]}
+    projection: [cause, effect]
+    category: causal
+  selects_for:
+    description: An antibiotic pressure selects for a resistance outcome.
+    arguments:
+      pressure: {cardinality: 1, allowed_types: [Antibiotic]}
+      outcome: {cardinality: 1, allowed_types: [Mutation, Phenotype, Population]}
+    projection: [pressure, outcome]
+    category: causal
+  supports:
+    description: Evidence supports a scientific proposition.
+    arguments:
+      evidence: {cardinality: 1, allowed_types: [Experiment, Proposition]}
+      claim: {cardinality: 1, allowed_types: [Proposition]}
+    projection: [evidence, claim]
+  blocks:
+    description: An inhibitor blocks a resistance protein or mechanism.
+    arguments:
+      intervention: {cardinality: 1, allowed_types: [Inhibitor]}
+      target: {cardinality: 1, allowed_types: [Protein, Pathway, Phenotype, Proposition]}
+    projection: [intervention, target]
+    category: causal
+  prevents:
+    description: An intervention prevents a resistance outcome or evolutionary proposition.
+    arguments:
+      intervention: {cardinality: 1, allowed_types: [Inhibitor]}
+      target: {cardinality: 1, allowed_types: [Mutation, Phenotype, Population, Proposition]}
+    projection: [intervention, target]
+    category: causal
+  studies:
+    description: An experiment studies a strain or population.
+    arguments:
+      experiment: {cardinality: 1, allowed_types: [Experiment]}
+      subject: {cardinality: 1, allowed_types: [Organism, Strain, Population]}
+    projection: [experiment, subject]

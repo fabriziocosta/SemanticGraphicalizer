@@ -58,6 +58,8 @@ The download and cache logic is reusable outside the notebook:
 from semantic_graphicalizer import load_aesop_fables
 
 stories = load_aesop_fables(limit=2)
+# Complete parsed corpus:
+all_stories = load_aesop_fables(limit=None)
 # Reproducible random selection from the full cached collection:
 stories = load_aesop_fables(limit=2, select_at_random=True, rand_seed=7)
 ```
@@ -125,3 +127,22 @@ Long paragraphs are split at word boundaries, and transient model-provider
 failures are retried with exponential backoff. Configure `max_retries` and
 `retry_backoff` on `SemanticGraphicalizer` when a provider needs different
 limits; set `max_retries=0` to disable retries.
+
+## AbstractGraph adapter
+
+Install the optional integration with `pip install -e '.[abstractgraph]'`.
+Convert a trace to an AbstractGraph, optionally computing node text embeddings
+during conversion:
+
+```python
+abstract = graphicalizer.to_abstract_graph(trace, embed_nodes=True)
+matrix = abstract.to_array()
+story_vector = matrix.sum(axis=0)
+```
+
+`embed_nodes` defaults to `False`, so conversion does not make embedding API
+requests unless requested. Matching vectors are reused when their text and
+embedding configuration are unchanged. Direct conversion helpers are also
+available as `semantic_graph_to_abstract_graph(graph)` and
+`trace_to_abstract_graph(trace)`; they use embeddings already attached to the
+semantic graph.

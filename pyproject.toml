@@ -22,6 +22,9 @@ dev = [
     "nbclient>=0.8",
     "pytest>=8.0",
 ]
+abstractgraph = [
+    "abstractgraph @ git+https://github.com/fabriziocosta/abstractgraph.git",
+]
 
 [tool.setuptools.packages.find]
 include = ["semantic_graphicalizer*"]

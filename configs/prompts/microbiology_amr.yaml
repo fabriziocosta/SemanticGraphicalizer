@@ -1,0 +1,77 @@
+domain: microbiology-amr
+version: "1.0"
+stages:
+  summarize:
+    system: >-
+      Summarize scientific text while preserving organisms, experimental context,
+      findings, causal claims, qualifications, and source distinctions.
+    instruction: |
+      Ontology:
+      {ontology}
+
+      Source text:
+      {text}
+    output: Return JSON with one non-empty string field named summary.
+  normalize:
+    system: >-
+      Normalize a scientific summary into precise ontology-aligned prose without
+      adding biological claims or strengthening the evidence.
+    instruction: |
+      Ontology:
+      {ontology}
+
+      Summary:
+      {text}
+    output: Return JSON with one non-empty string field named normalized.
+  decompose:
+    system: >-
+      Decompose normalized scientific prose into source-grounded assertions.
+    instruction: |
+      Each assertion must express one claim and preserve modality, negation,
+      attribution, qualification, and source wording.
+
+      Ontology:
+      {ontology}
+
+      Normalized text:
+      {text}
+    output: >-
+      Return JSON with an assertions list. Every item must contain id, text,
+      source_text, and an attributes object.
+  extract:
+    system: >-
+      Extract atomic scientific entities and reified relation instances with
+      named arguments from the assertions.
+    instruction: |
+      Use only configured Entity types, relation types, and argument roles.
+      Every relation argument entity_id must reference an entity or relation id
+      in this response. Relations may reference other relations. Do not infer
+      relations unsupported by the source assertions.
+
+      Ontology:
+      {ontology}
+
+      Assertions:
+      {text}
+    output: >-
+      Return JSON with entities and relations lists. Entity items contain id,
+      type, mention, key, and attributes. Relation items contain id, type,
+      relation, arguments [{role, entity_id, attributes}], and attributes.
+  resolve:
+    system: >-
+      Identify only explicit cross-chunk or higher-order scientific relations
+      supported by the document and reference known graph objects.
+    instruction: |
+      Use configured relation schemas and argument roles. Known IDs include
+      atomic entities and already extracted relation entities. Every argument
+      must reference a known ID. Return no relation when the text does not
+      support it.
+
+      Ontology:
+      {ontology}
+
+      Existing graph objects:
+      {text}
+    output: >-
+      Return JSON with a relations list. Each relation contains id, type,
+      relation, arguments, and attributes.
