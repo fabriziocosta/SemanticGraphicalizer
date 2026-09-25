@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from sklearn.cluster import AgglomerativeClustering, KMeans
+from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import (
     adjusted_rand_score,
@@ -152,10 +152,44 @@ def _cluster_representations(
     graph_matrix: Any,
     text_matrix: np.ndarray,
     random_seed: int,
+    max_cluster_size: int = 5,
 ) -> dict[str, Any]:
     n_tales = graph_matrix.shape[0]
     if n_tales < 3:
         raise ValueError("Clustering inspection needs at least three tales")
+    if isinstance(max_cluster_size, bool) or not isinstance(max_cluster_size, int) or max_cluster_size < 1:
+        raise ValueError("max_cluster_size must be a positive integer")
+
+    def hierarchical_labels(features: np.ndarray) -> np.ndarray:
+        tree = AgglomerativeClustering(n_clusters=1, linkage="ward").fit(features)
+        n_samples = features.shape[0]
+        children = tree.children_
+        subtree_sizes = {node: 1 for node in range(n_samples)}
+        for merge_index, (left, right) in enumerate(children):
+            parent = n_samples + merge_index
+            subtree_sizes[parent] = subtree_sizes[left] + subtree_sizes[right]
+
+        def leaves(node: int) -> list[int]:
+            if node < n_samples:
+                return [node]
+            left, right = children[node - n_samples]
+            return leaves(int(left)) + leaves(int(right))
+
+        groups: list[list[int]] = []
+
+        def split_oversized(node: int) -> None:
+            if subtree_sizes[node] <= max_cluster_size:
+                groups.append(leaves(node))
+                return
+            left, right = children[node - n_samples]
+            split_oversized(int(left))
+            split_oversized(int(right))
+
+        split_oversized(2 * n_samples - 2)
+        labels = np.empty(n_samples, dtype=int)
+        for label, members in enumerate(groups):
+            labels[members] = label
+        return labels
 
     scaled_graph = StandardScaler(with_mean=False).fit_transform(graph_matrix)
     svd_components = max(2, min(50, n_tales - 1, scaled_graph.shape[1] - 1))
@@ -166,35 +200,35 @@ def _cluster_representations(
 
     cluster_results: dict[tuple[str, str, int], np.ndarray] = {}
     metric_rows = []
-    max_k = min(8, n_tales - 1)
     for representation, features in (("AbstractGraph", graph_features), ("Direct text", text_features)):
-        for algorithm in ("kmeans", "agglomerative"):
-            for k in range(2, max_k + 1):
-                if algorithm == "kmeans":
-                    estimator = KMeans(n_clusters=k, random_state=random_seed, n_init=10)
-                else:
-                    estimator = AgglomerativeClustering(n_clusters=k)
-                labels = estimator.fit_predict(features)
-                cluster_results[(representation, algorithm, k)] = labels
-                metric_rows.append({
-                    "representation": representation,
-                    "algorithm": algorithm,
-                    "k": k,
-                    "silhouette": silhouette_score(features, labels),
-                    "calinski_harabasz": calinski_harabasz_score(features, labels),
-                    "davies_bouldin": davies_bouldin_score(features, labels),
-                })
-
-    agreement_rows = []
-    for k in range(2, max_k + 1):
-        graph_labels = cluster_results[("AbstractGraph", "kmeans", k)]
-        text_labels = cluster_results[("Direct text", "kmeans", k)]
-        agreement_rows.append({
-            "algorithm": "kmeans",
-            "k": k,
-            "ari": float(adjusted_rand_score(graph_labels, text_labels)),
-            "nmi": float(normalized_mutual_info_score(graph_labels, text_labels)),
+        labels = hierarchical_labels(features)
+        cluster_results[(representation, "hierarchical_ward", max_cluster_size)] = labels
+        cluster_count = len(np.unique(labels))
+        if 1 < cluster_count < n_tales:
+            silhouette = float(silhouette_score(features, labels))
+            calinski_harabasz = float(calinski_harabasz_score(features, labels))
+            davies_bouldin = float(davies_bouldin_score(features, labels))
+        else:
+            silhouette = calinski_harabasz = davies_bouldin = None
+        metric_rows.append({
+            "representation": representation,
+            "algorithm": "hierarchical_ward",
+            "max_cluster_size": max_cluster_size,
+            "cluster_count": cluster_count,
+            "largest_cluster": max(np.bincount(labels)),
+            "silhouette": silhouette,
+            "calinski_harabasz": calinski_harabasz,
+            "davies_bouldin": davies_bouldin,
         })
+
+    graph_labels = cluster_results[("AbstractGraph", "hierarchical_ward", max_cluster_size)]
+    text_labels = cluster_results[("Direct text", "hierarchical_ward", max_cluster_size)]
+    agreement_rows = [{
+        "algorithm": "hierarchical_ward",
+        "max_cluster_size": max_cluster_size,
+        "ari": float(adjusted_rand_score(graph_labels, text_labels)),
+        "nmi": float(normalized_mutual_info_score(graph_labels, text_labels)),
+    }]
 
     return {
         "graph_features": graph_features,
@@ -202,7 +236,7 @@ def _cluster_representations(
         "cluster_results": cluster_results,
         "metric_rows": metric_rows,
         "agreement_rows": agreement_rows,
-        "max_k": max_k,
+        "max_cluster_size": max_cluster_size,
         "svd_components": svd_components,
     }
 
@@ -216,6 +250,7 @@ def run_experiment(
     embedding_model: str = DEFAULT_OPENAI_EMBEDDING_MODEL,
     random_seed: int = 17,
     nbits: int = 14,
+    max_cluster_size: int = 5,
 ) -> dict[str, Any]:
     """Load/cache Aesop graphs and vectors, cluster them, and save a manifest."""
 
@@ -278,7 +313,12 @@ def run_experiment(
         cache_dir / "direct_text_vectors.pkl",
         embedding_model,
     )
-    clustering = _cluster_representations(graph_matrix, text_matrix, random_seed)
+    clustering = _cluster_representations(
+        graph_matrix,
+        text_matrix,
+        random_seed,
+        max_cluster_size=max_cluster_size,
+    )
 
     settings = {
         "smoke_test": smoke_test,
@@ -294,6 +334,7 @@ def run_experiment(
         },
         "text_baseline": {"chunk_chars": 6000, "pooling": "mean"},
         "random_seed": random_seed,
+        "max_cluster_size": max_cluster_size,
     }
     run_hash = hashlib.sha256(json.dumps({
         "settings": settings,
@@ -330,8 +371,8 @@ def run_experiment(
         } for row in clustering["metric_rows"]],
         "graph_text_agreement": clustering["agreement_rows"],
         "cluster_assignments": {
-            f"{representation}|{algorithm}|k={k}": [int(label) for label in labels]
-            for (representation, algorithm, k), labels in clustering["cluster_results"].items()
+            f"{representation}|{algorithm}|max_size={cluster_size}": [int(label) for label in labels]
+            for (representation, algorithm, cluster_size), labels in clustering["cluster_results"].items()
         },
     }
     run_mode = "smoke" if smoke_test else "full"

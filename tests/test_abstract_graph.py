@@ -150,7 +150,7 @@ def test_summed_abstractgraph_vectors_have_stable_width():
     assert first_vector.shape == second_vector.shape == (16 * 2,)
 
 
-def test_graph_level_transformer_uses_simple_base_graphs_for_abstract_graphs():
+def test_graph_level_transformer_accepts_prebuilt_abstract_graphs():
     abstract = semantic_graph_to_abstract_graph(graph_with_chunks(), nbits=4)
     from abstractgraph import vectorize
 
