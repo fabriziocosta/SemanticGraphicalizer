@@ -314,7 +314,15 @@ class SemanticPipeline:
                 argument = _as_mapping(raw_argument, "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
                 role = _text(argument.get("role"), "role", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
                 reference = _text(argument.get("entity_id"), "entity_id", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-                target_id = local_entities.get(reference, local_relations.get(reference, reference))
+                target_id = local_entities.get(reference) or local_relations.get(reference)
+                if target_id is None:
+                    raise StageOutputError(
+                        "extract",
+                        f"relation '{local}' argument '{role}' references unknown object id '{reference}'; "
+                        "arguments must reference an entity or relation id from this extraction response",
+                        document_id=normalized.chunk.document_id,
+                        chunk_id=normalized.chunk.chunk_id,
+                    )
                 arguments.append(Argument(role, target_id, _attrs(argument.get("attributes", {}), "attributes", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)))
             attributes = _attrs(item.get("attributes", {}), "attributes", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
             source_text = str(attributes.get("source_text", normalized.chunk.text))

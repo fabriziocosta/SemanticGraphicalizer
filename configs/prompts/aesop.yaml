@@ -1,5 +1,5 @@
 domain: aesop-narrative
-version: "2.0"
+version: "2.1"
 stages:
   summarize:
     system: >-
@@ -45,7 +45,10 @@ stages:
     instruction: |
       Use only configured Entity types, relation types, and argument roles.
       Every relation argument entity_id must reference an entity or relation
-      id in this response. Relations may reference other relations.
+      id in this response. Use the exact local id from that entity or relation
+      item. Assertion ids identify claims in the input and are not entity or
+      relation ids; never use an assertion id as an argument entity_id.
+      Relations may reference other relations.
       Do not infer relations unsupported by the source assertions.
 
       Ontology:
