@@ -11,7 +11,7 @@ import numpy as np
 from .types import DocumentTrace
 
 
-ParallelEdgePolicy = Literal["combine", "error"]
+ParallelEdgePolicy = Literal["combine", "first", "error"]
 InterpretationMode = Literal["per_entity", "by_chunk_and_type"]
 
 
@@ -113,25 +113,35 @@ def _base_graph(
             source, target = records[0][:2]
             raise ValueError(f"parallel semantic edges found between '{source}' and '{target}'")
         source, target = records[0][:2]
-        roles = [record.get("role") for _source, _target, _key, record in records]
-        distinct_roles = sorted(set(roles), key=lambda role: (role is None, str(role)))
         edge_data = dict(records[0][3])
-        edge_data["label"] = distinct_roles[0] if len(distinct_roles) == 1 else tuple(distinct_roles)
-        semantic_edges = []
-        for edge_source, edge_target, key, record in records:
-            semantic_edge = {"key": key, **record}
+        if parallel_edge_policy == "first":
+            edge_data["label"] = records[0][3].get("role")
+            edge_source, edge_target, key, record = records[0]
+            chosen_edge = {"key": key, **record}
             if not preserve_direction:
-                semantic_edge["source"] = edge_source
-                semantic_edge["target"] = edge_target
-            semantic_edges.append(semantic_edge)
-        edge_data["semantic_edges"] = semantic_edges
-        if len(records) > 1:
-            edge_data["semantic_attributes"] = [
-                dict(record.get("attributes", {}))
-                for _source, _target, _key, record in records
-            ]
+                chosen_edge["source"] = edge_source
+                chosen_edge["target"] = edge_target
+            edge_data["semantic_edges"] = [chosen_edge]
+            edge_data["semantic_attributes"] = dict(record.get("attributes", {}))
         else:
-            edge_data["semantic_attributes"] = dict(records[0][3].get("attributes", {}))
+            roles = [record.get("role") for _source, _target, _key, record in records]
+            distinct_roles = sorted(set(roles), key=lambda role: (role is None, str(role)))
+            edge_data["label"] = distinct_roles[0] if len(distinct_roles) == 1 else tuple(distinct_roles)
+            semantic_edges = []
+            for edge_source, edge_target, key, record in records:
+                semantic_edge = {"key": key, **record}
+                if not preserve_direction:
+                    semantic_edge["source"] = edge_source
+                    semantic_edge["target"] = edge_target
+                semantic_edges.append(semantic_edge)
+            edge_data["semantic_edges"] = semantic_edges
+            if len(records) > 1:
+                edge_data["semantic_attributes"] = [
+                    dict(record.get("attributes", {}))
+                    for _source, _target, _key, record in records
+                ]
+            else:
+                edge_data["semantic_attributes"] = dict(records[0][3].get("attributes", {}))
         base.add_edge(source, target, **edge_data)
     return base
 
@@ -151,8 +161,9 @@ def semantic_graph_to_abstract_graph(
 
     The base graph retains the reified semantic nodes and directed argument
     edges. Since AbstractGraph accepts only simple graphs, parallel edges with
-    the same direction and endpoints are combined; their original records are
-    retained in the edge's ``semantic_edges`` attribute.
+    the same direction and endpoints can be combined, reduced to the first
+    edge, or rejected according to ``parallel_edge_policy``. The default
+    ``combine`` retains their records in the edge's ``semantic_edges`` attribute.
 
     By default, each base node maps to its own interpretation node labeled by
     semantic entity type. Set ``interpretation_mode="by_chunk_and_type"`` to
@@ -166,8 +177,8 @@ def semantic_graph_to_abstract_graph(
 
     if not isinstance(graph, nx.MultiDiGraph):
         raise TypeError("graph must be a NetworkX MultiDiGraph")
-    if parallel_edge_policy not in {"combine", "error"}:
-        raise ValueError("parallel_edge_policy must be 'combine' or 'error'")
+    if parallel_edge_policy not in {"combine", "first", "error"}:
+        raise ValueError("parallel_edge_policy must be 'combine', 'first', or 'error'")
     if not isinstance(embedding_key, str) or not embedding_key:
         raise ValueError("embedding_key must be a non-empty string")
     if not isinstance(chunk_key, str) or not chunk_key:

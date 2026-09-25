@@ -35,6 +35,7 @@ from .pipeline import (
 from .transformer import SemanticGraphicalizer
 from .abstract_graph import (
     InterpretationMode,
+    ParallelEdgePolicy,
     semantic_graph_to_abstract_graph,
     trace_to_abstract_graph,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "PromptStage",
     "RelationInstance",
     "InterpretationMode",
+    "ParallelEdgePolicy",
     "SemanticGraphicalizer",
     "semantic_graph_to_abstract_graph",
     "trace_to_abstract_graph",

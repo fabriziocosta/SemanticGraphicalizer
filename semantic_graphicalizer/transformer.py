@@ -13,7 +13,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
-from .abstract_graph import InterpretationMode, semantic_graph_to_abstract_graph
+from .abstract_graph import InterpretationMode, ParallelEdgePolicy, semantic_graph_to_abstract_graph
 from .model import (
     DEFAULT_OPENAI_EMBEDDING_MODEL,
     EmbeddingClient,
@@ -309,7 +309,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         embed_nodes: bool = False,
         embedding_key: str = "embedding",
         chunk_key: str = "chunk_id",
-        parallel_edge_policy: str = "combine",
+        parallel_edge_policy: ParallelEdgePolicy = "combine",
         nbits: int = 14,
         preserve_direction: bool = True,
         interpretation_mode: InterpretationMode = "per_entity",
@@ -322,6 +322,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         before conversion. Matching embeddings are reused. By default, each
         semantic node maps to a distinct interpretation node; set
         ``interpretation_mode="by_chunk_and_type"`` to group them as before.
+        ``parallel_edge_policy`` can combine parallel edges, keep only the
+        first, or raise an error.
         """
 
         if isinstance(graph_or_trace, DocumentTrace):
@@ -332,6 +334,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise TypeError("graph_or_trace must be a MultiDiGraph or DocumentTrace")
         if not isinstance(embed_nodes, bool):
             raise TypeError("embed_nodes must be a bool")
+        if parallel_edge_policy not in {"combine", "first", "error"}:
+            raise ValueError("parallel_edge_policy must be 'combine', 'first', or 'error'")
         if not isinstance(interpretation_mode, str) or interpretation_mode not in {
             "per_entity",
             "by_chunk_and_type",
@@ -362,7 +366,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         embed_nodes: bool = False,
         embedding_key: str = "embedding",
         chunk_key: str = "chunk_id",
-        parallel_edge_policy: str = "combine",
+        parallel_edge_policy: ParallelEdgePolicy = "combine",
         nbits: int = 14,
         preserve_direction: bool = True,
         interpretation_mode: InterpretationMode = "per_entity",
@@ -399,8 +403,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise ValueError("embedding_key must be a non-empty string")
         if not isinstance(chunk_key, str) or not chunk_key:
             raise ValueError("chunk_key must be a non-empty string")
-        if parallel_edge_policy not in {"combine", "error"}:
-            raise ValueError("parallel_edge_policy must be 'combine' or 'error'")
+        if parallel_edge_policy not in {"combine", "first", "error"}:
+            raise ValueError("parallel_edge_policy must be 'combine', 'first', or 'error'")
         if isinstance(nbits, bool) or not isinstance(nbits, int) or nbits < 1:
             raise ValueError("nbits must be a positive integer")
         if not isinstance(preserve_direction, bool):
@@ -440,7 +444,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         embed_nodes: bool = False,
         embedding_key: str = "embedding",
         chunk_key: str = "chunk_id",
-        parallel_edge_policy: str = "combine",
+        parallel_edge_policy: ParallelEdgePolicy = "combine",
         nbits: int = 14,
         preserve_direction: bool = True,
         interpretation_mode: InterpretationMode = "per_entity",

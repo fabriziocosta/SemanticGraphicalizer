@@ -26,8 +26,9 @@ not yet been verified or recorded.
   Text is not used as a discrete label.
 - Conversion preserves directedness by default, can produce an undirected
   base graph, and combines parallel argument edges by default while retaining
-  their records. Chunk provenance determines interpretation groups, with a
-  document-level fallback.
+  their records; it can also keep only the first parallel edge or reject them.
+  Chunk provenance determines interpretation groups, with a document-level
+  fallback.
 - Focused adapter tests cover conversion, grouping, edge policies, embedding
   reuse and dimension handling, stable vector width, and lazy optional
   dependency loading.
