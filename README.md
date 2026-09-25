@@ -66,10 +66,11 @@ all_stories = load_aesop_fables(limit=None)
 stories = load_aesop_fables(limit=2, select_at_random=True, rand_seed=7)
 ```
 
-This returns a `list[str]`, one complete story per item, and caches the parsed
-results under `data/raw/aesop_fables.json`. The Gutenberg source is also kept
-under `data/raw/pg53103.txt`; after the first call, subsequent calls do not
-download anything.
+This returns a `list[str]`, one complete story per item, from Project
+Gutenberg's *Three Hundred Aesop's Fables*. The edition contains 313 indexed
+story headings. The parsed stories are cached under
+`data/raw/aesop_300_fables.json`, and the source under `data/raw/pg21.txt`;
+after the first call, subsequent calls do not download anything.
 
 Graphs can be rendered inline in a notebook with either the interactive D3
 layout or a deterministic static SVG layout:
