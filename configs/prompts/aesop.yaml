@@ -67,8 +67,11 @@ stages:
     instruction: |
       Use configured relation schemas and argument roles. Known IDs include
       atomic entities and already extracted relation entities. Every argument
-      must reference a known ID. Return no relation when the text does not
-      support it.
+      must exactly match one of those IDs, or the id of another relation in
+      your response. Do not invent or modify IDs. If validation feedback is
+      included in the graph context, correct the cited error. Return no
+      relation when the text does not support it or its arguments cannot be
+      referenced.
 
       Ontology:
       {ontology}
