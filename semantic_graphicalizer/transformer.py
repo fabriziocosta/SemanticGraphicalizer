@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import networkx as nx
+import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.random_projection import GaussianRandomProjection
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
 from .abstract_graph import InterpretationMode, ParallelEdgePolicy, semantic_graph_to_abstract_graph
@@ -29,6 +31,89 @@ from .pipeline import (
     SemanticPipeline,
 )
 from .visualization import display_graph
+
+
+def _project_graph_embeddings(
+    graph: nx.MultiDiGraph,
+    *,
+    embedding_key: str,
+    embedding_dim: int,
+    random_seed: int,
+) -> nx.MultiDiGraph:
+    """Return a copy with node embeddings projected by a seeded Gaussian map."""
+
+    records: list[tuple[Any, np.ndarray]] = []
+    for node_id, data in graph.nodes(data=True):
+        attributes = data.get("attributes", {})
+        value = data.get(embedding_key)
+        if value is None and isinstance(attributes, Mapping):
+            value = attributes.get(embedding_key)
+        if value is None:
+            continue
+        try:
+            vector = np.asarray(value, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"embedding for node '{node_id}' must be a numeric vector") from exc
+        if vector.ndim != 1 or vector.size == 0 or not np.isfinite(vector).all():
+            raise ValueError(f"embedding for node '{node_id}' must be a finite, non-empty vector")
+        records.append((node_id, vector))
+
+    if not records:
+        raise ValueError("embedding_dim requires at least one node embedding")
+    dimensions = {vector.size for _node_id, vector in records}
+    if len(dimensions) != 1:
+        raise ValueError(f"node embeddings must have one consistent dimension; found {sorted(dimensions)}")
+    source_dim = next(iter(dimensions))
+    if embedding_dim >= source_dim:
+        raise ValueError(
+            f"embedding_dim ({embedding_dim}) must be smaller than the source dimension ({source_dim})"
+        )
+
+    vectors = np.vstack([vector for _node_id, vector in records])
+    projected = GaussianRandomProjection(
+        n_components=embedding_dim,
+        random_state=random_seed,
+    ).fit_transform(vectors)
+    result = graph.copy()
+    result.graph["embedding_projection"] = {
+        "method": "GaussianRandomProjection",
+        "source_dimension": source_dim,
+        "dimension": embedding_dim,
+        "random_seed": random_seed,
+    }
+    for (node_id, _vector), reduced_vector in zip(records, projected):
+        node_data = result.nodes[node_id]
+        reduced_values = reduced_vector.tolist()
+        node_data[embedding_key] = reduced_values
+        attributes = node_data.get("attributes")
+        if isinstance(attributes, Mapping) and embedding_key in attributes:
+            reduced_attributes = dict(attributes)
+            reduced_attributes[embedding_key] = reduced_values
+            node_data["attributes"] = reduced_attributes
+        raw_metadata = node_data.get("embedding_metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+        metadata.update({
+            "source_dimension": source_dim,
+            "dimension": embedding_dim,
+            "projection_method": "GaussianRandomProjection",
+            "projection_random_seed": random_seed,
+        })
+        node_data["embedding_metadata"] = metadata
+    return result
+
+
+def _validate_embedding_projection(
+    embedding_dim: int | None,
+    random_seed: int,
+) -> None:
+    if embedding_dim is not None and (
+        isinstance(embedding_dim, bool)
+        or not isinstance(embedding_dim, int)
+        or embedding_dim < 1
+    ):
+        raise ValueError("embedding_dim must be None or a positive integer")
+    if isinstance(random_seed, bool) or not isinstance(random_seed, int) or random_seed < 0:
+        raise ValueError("random_seed must be a non-negative integer")
 
 
 class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
@@ -317,6 +402,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         interpretation_mode: InterpretationMode = "per_entity",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
+        embedding_dim: int | None = None,
+        random_seed: int = 17,
     ) -> Any:
         """Convert a semantic graph to an optional AbstractGraph.
 
@@ -325,13 +412,18 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         semantic node maps to a distinct interpretation node; set
         ``interpretation_mode="by_chunk_and_type"`` to group them as before.
         ``parallel_edge_policy`` can combine parallel edges, keep only the
-        first, or raise an error.
+        first, or raise an error. Set ``embedding_dim`` to a positive integer
+        (128 is a useful target) to apply a seeded Gaussian random projection
+        before conversion. ``embedding_dim=None`` leaves embeddings unchanged;
+        ``random_seed`` defaults to 17. Projection is applied to a graph copy,
+        leaving cached source embeddings unchanged.
         """
 
         if not isinstance(graph, nx.MultiDiGraph):
             raise TypeError("graph must be a NetworkX MultiDiGraph")
         if not isinstance(embed_nodes, bool):
             raise TypeError("embed_nodes must be a bool")
+        _validate_embedding_projection(embedding_dim, random_seed)
         if parallel_edge_policy not in {"combine", "first", "error"}:
             raise ValueError("parallel_edge_policy must be 'combine', 'first', or 'error'")
         if not isinstance(interpretation_mode, str) or interpretation_mode not in {
@@ -347,8 +439,18 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 batch_size=batch_size,
                 skip_matching=True,
             )
+        conversion_graph = (
+            _project_graph_embeddings(
+                graph,
+                embedding_key=embedding_key,
+                embedding_dim=embedding_dim,
+                random_seed=random_seed,
+            )
+            if embedding_dim is not None
+            else graph
+        )
         return semantic_graph_to_abstract_graph(
-            graph,
+            conversion_graph,
             embedding_key=embedding_key,
             chunk_key=chunk_key,
             parallel_edge_policy=parallel_edge_policy,
@@ -370,12 +472,16 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         interpretation_mode: InterpretationMode = "per_entity",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
+        embedding_dim: int | None = None,
+        random_seed: int = 17,
     ) -> list[Any]:
         """Convert multiple semantic graphs to AbstractGraphs.
 
         When ``embed_nodes=True``, node embeddings are computed across all
         inputs in batches before conversion. ``interpretation_mode`` is applied
-        to every result. Results preserve input order.
+        to every result and results preserve input order. When ``embedding_dim``
+        is an integer, the same seeded projection is used for graphs with the
+        same source embedding dimension. ``None`` skips dimensionality reduction.
         """
 
         if isinstance(graphs, (str, bytes)):
@@ -390,6 +496,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
 
         if not isinstance(embed_nodes, bool):
             raise TypeError("embed_nodes must be a bool")
+        _validate_embedding_projection(embedding_dim, random_seed)
         if not isinstance(embedding_key, str) or not embedding_key:
             raise ValueError("embedding_key must be a non-empty string")
         if not isinstance(chunk_key, str) or not chunk_key:
@@ -424,6 +531,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 nbits=nbits,
                 preserve_direction=preserve_direction,
                 interpretation_mode=interpretation_mode,
+                embedding_dim=embedding_dim,
+                random_seed=random_seed,
             )
             for value in values
         ]
@@ -441,11 +550,15 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         interpretation_mode: InterpretationMode = "per_entity",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
+        embedding_dim: int | None = None,
+        random_seed: int = 17,
     ) -> list[Any]:
         """Transform documents directly into AbstractGraph objects.
 
         ``interpretation_mode`` selects per-entity mappings or the legacy
-        chunk-and-type grouping for each returned graph.
+        chunk-and-type grouping for each returned graph. Optional seeded
+        Gaussian random projection settings are passed to
+        ``to_abstract_graph``. Set ``embedding_dim=None`` to skip reduction.
         """
 
         graphs = self.transform(X)
@@ -461,6 +574,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 interpretation_mode=interpretation_mode,
                 node_text_fn=node_text_fn,
                 batch_size=batch_size,
+                embedding_dim=embedding_dim,
+                random_seed=random_seed,
             )
             for graph in graphs
         ]

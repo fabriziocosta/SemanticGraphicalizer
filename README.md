@@ -143,12 +143,28 @@ Other pipeline stages retain their normal validation errors.
 
 Install the optional integration with `pip install -e '.[abstractgraph]'`.
 Convert a graph to an AbstractGraph, optionally computing node text embeddings
-during conversion:
+during conversion. Node embeddings can also be reduced with a seeded Gaussian
+random projection by setting `embedding_dim` to the desired positive dimension.
+The default `embedding_dim=None` leaves embeddings unchanged, and the random
+seed defaults to 17. The projection is applied to a graph copy, so cached
+source embeddings keep their original dimension:
 
 ```python
-abstract = graphicalizer.to_abstract_graph(graphs[0], embed_nodes=True)
-matrix = abstract.to_array()
-story_vector = matrix.sum(axis=0)
+from abstractgraph import AbstractGraphTransformer
+
+abstract = graphicalizer.to_abstract_graph(
+    graphs[0],
+    embed_nodes=True,
+    embedding_dim=128,
+    random_seed=17,
+)
+graph_vectorizer = AbstractGraphTransformer(
+    nbits=14,
+    decomposition_function=None,
+    return_dense=False,
+    n_jobs=1,
+)
+story_vector = graph_vectorizer.fit_transform([abstract])
 ```
 
 Directedness is preserved by default. Pass `preserve_direction=False` to build
