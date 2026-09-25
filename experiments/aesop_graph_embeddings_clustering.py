@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from abstractgraph import AbstractGraphTransformer
+from scipy.sparse import vstack
 from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import (
@@ -261,12 +261,15 @@ def run_experiment(
     abstract_graphs = graphicalizer.to_abstract_graphs(
         graphs, embed_nodes=embed_nodes, **abstract_settings
     )
-    vectorizer_settings = {"return_dense": False, "n_jobs": -1}
-    graph_matrix = AbstractGraphTransformer(
-        nbits=nbits,
-        decomposition_function=None,
-        **vectorizer_settings,
-    ).fit_transform(abstract_graphs)
+    # ``to_abstract_graphs`` has already built and populated each AbstractGraph.
+    # AbstractGraphTransformer accepts raw NetworkX graphs and wraps them in a
+    # new AbstractGraph, so passing these objects to it attempts to wrap an
+    # AbstractGraph as a NetworkX graph. Pool the per-node features from each
+    # converted graph directly to get one sparse row per tale.
+    graph_matrix = vstack(
+        [abstract_graph.to_array().sum(axis=0) for abstract_graph in abstract_graphs],
+        format="csr",
+    )
 
     # Persist any node embeddings computed during AbstractGraph conversion.
     for graph, row in zip(graphs, metadata):
@@ -292,7 +295,7 @@ def run_experiment(
         "embedding_model": embedding_model,
         "embed_nodes": embed_nodes,
         "abstractgraph": abstract_settings,
-        "graph_vectorizer": vectorizer_settings,
+        "graph_vectorizer": {"pooling": "sum", "return_dense": False},
         "text_baseline": {"chunk_chars": 6000, "pooling": "mean"},
         "random_seed": random_seed,
     }
