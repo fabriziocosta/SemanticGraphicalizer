@@ -8,8 +8,6 @@ from typing import Any, Literal
 import networkx as nx
 import numpy as np
 
-from .types import DocumentTrace
-
 
 ParallelEdgePolicy = Literal["combine", "first", "error"]
 InterpretationMode = Literal["per_entity", "by_chunk_and_type"]
@@ -264,29 +262,3 @@ def semantic_graph_to_abstract_graph(
         interpretation_data["label"] = entity_type
         interpretation_data["display_label"] = entity_type
     return abstract
-
-
-def trace_to_abstract_graph(
-    trace: DocumentTrace,
-    *,
-    embedding_key: str = "embedding",
-    chunk_key: str = "chunk_id",
-    parallel_edge_policy: ParallelEdgePolicy = "combine",
-    nbits: int = 14,
-    preserve_direction: bool = True,
-    interpretation_mode: InterpretationMode = "per_entity",
-) -> Any:
-    """Convert a trace's semantic graph to an ``AbstractGraph``."""
-
-    if not isinstance(trace, DocumentTrace):
-        raise TypeError("trace must be a DocumentTrace")
-    return semantic_graph_to_abstract_graph(
-        trace.graph,
-        embedding_key=embedding_key,
-        chunk_key=chunk_key,
-        parallel_edge_policy=parallel_edge_policy,
-        nbits=nbits,
-        document_id=trace.document_id,
-        preserve_direction=preserve_direction,
-        interpretation_mode=interpretation_mode,
-    )

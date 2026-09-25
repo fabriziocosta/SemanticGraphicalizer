@@ -13,7 +13,7 @@ from semantic_graphicalizer import (
 from semantic_graphicalizer.exceptions import StageOutputError
 from semantic_graphicalizer.graph import GraphValidationError, materialize_graph
 from semantic_graphicalizer.pipeline import ConservativeEntityResolver, ParagraphWindowSegmenter, _format_elapsed
-from semantic_graphicalizer.types import Argument, DocumentTrace, Entity, RelationInstance
+from semantic_graphicalizer.types import Argument, Entity, RelationInstance
 
 
 ONTOLOGY = {
@@ -81,7 +81,7 @@ def make_transformer(extraction, resolved=None):
     return SemanticGraphicalizer(ONTOLOGY, PROMPTS, FakeModel(extraction, resolved), verbose=False)
 
 
-def test_compute_embeddings_accepts_traces_and_stores_vectors_on_nodes() -> None:
+def test_compute_embeddings_stores_vectors_on_graph_nodes() -> None:
     graph = nx.MultiDiGraph()
     graph.add_node(
         "fox",
@@ -97,7 +97,6 @@ def test_compute_embeddings_accepts_traces_and_stores_vectors_on_nodes() -> None
         source_text="The fox causes the result.",
         attributes={"source_text": "The fox causes the result."},
     )
-    trace = DocumentTrace("doc", "source", [], [], [], [], [], graph)
     embedder = FakeEmbedder()
     graphicalizer = SemanticGraphicalizer(
         ONTOLOGY,
@@ -107,9 +106,9 @@ def test_compute_embeddings_accepts_traces_and_stores_vectors_on_nodes() -> None
         verbose=False,
     )
 
-    result = graphicalizer.compute_embeddings(trace, batch_size=1)
+    result = graphicalizer.compute_embeddings(graph, batch_size=1)
 
-    assert result == [trace]
+    assert result == [graph]
     assert len(embedder.calls) == 2
     assert graph.nodes["fox"]["embedding"] == [len("Person | fox"), 0.0]
     assert graph.nodes["r1"]["embedding"] == [len("Event : causes | The fox causes the result."), 0.0]
@@ -148,13 +147,13 @@ def test_reified_binary_relation_and_projection() -> None:
             {"role": "patient", "entity_id": "rabbit", "attributes": {}},
         ], "attributes": {"confidence": 0.9}}],
     }
-    trace = make_transformer(extraction).fit(["source"]).transform_with_trace(["source"])[0]
-    assert isinstance(trace.graph, nx.MultiDiGraph)
-    relation_id = trace.relations[0].id
-    assert trace.graph.nodes[relation_id]["type"] == "Event"
-    assert trace.graph.nodes[relation_id]["relation"] == "chases"
-    assert {data["role"] for _, _, data in trace.graph.out_edges(relation_id, data=True)} == {"agent", "patient"}
-    projected = project_binary_relations(trace.graph, load_ontology(ONTOLOGY))
+    graph = make_transformer(extraction).transform(["source"])[0]
+    assert isinstance(graph, nx.MultiDiGraph)
+    relation_id = graph.graph["relations"][0]["id"]
+    assert graph.nodes[relation_id]["type"] == "Event"
+    assert graph.nodes[relation_id]["relation"] == "chases"
+    assert {data["role"] for _, _, data in graph.out_edges(relation_id, data=True)} == {"agent", "patient"}
+    projected = project_binary_relations(graph, load_ontology(ONTOLOGY))
     assert projected.has_edge("person::fox", "person::rabbit")
     assert projected.edges["person::fox", "person::rabbit", "projection:" + relation_id]["predicate"] == "chases"
 
@@ -173,10 +172,10 @@ def test_ternary_and_repeated_arguments_are_preserved() -> None:
             {"id": "support", "type": "Claim", "relation": "supports", "arguments": [{"role": "evidence", "entity_id": "experiment-a", "attributes": {}}, {"role": "evidence", "entity_id": "experiment-b", "attributes": {}}, {"role": "claim", "entity_id": "give", "attributes": {}}], "attributes": {}},
         ],
     }
-    trace = make_transformer(extraction).fit(["source"]).transform_with_trace(["source"])[0]
-    support_id = next(relation.id for relation in trace.relations if relation.relation == "supports")
-    assert [data["role"] for _, _, data in trace.graph.out_edges(support_id, data=True)] == ["evidence", "evidence", "claim"]
-    assert trace.graph.out_degree(support_id) == 3
+    graph = make_transformer(extraction).transform(["source"])[0]
+    support_id = next(relation["id"] for relation in graph.graph["relations"] if relation["relation"] == "supports")
+    assert [data["role"] for _, _, data in graph.out_edges(support_id, data=True)] == ["evidence", "evidence", "claim"]
+    assert graph.out_degree(support_id) == 3
 
 
 def test_recursive_relation_resolution_and_provenance_are_independent() -> None:
@@ -194,11 +193,11 @@ def test_recursive_relation_resolution_and_provenance_are_independent() -> None:
                 return {"relations": [{**resolved[0], "arguments": [{"role": "evidence", "entity_id": "experiment::experiment_17", "attributes": {}}, {"role": "claim", "entity_id": relation_id, "attributes": {}}]}]}
             return super().generate(stage=stage, prompt=prompt, schema=schema, context=context)
     transformer = SemanticGraphicalizer(ONTOLOGY, PROMPTS, ResolveModel(extraction), verbose=False)
-    trace = transformer.fit(["source"]).transform_with_trace(["source"])[0]
-    assert len(trace.relations) == 2
-    assert len(trace.graph.nodes[trace.relations[0].id]["attributes"]["provenance"]) == 1
-    assert len(trace.graph.nodes[trace.relations[1].id]["attributes"]["provenance"]) == 1
-    assert trace.graph.has_edge(trace.relations[1].id, trace.relations[0].id)
+    graph = transformer.transform(["source"])[0]
+    assert len(graph.graph["relations"]) == 2
+    assert len(graph.nodes[graph.graph["relations"][0]["id"]]["attributes"]["provenance"]) == 1
+    assert len(graph.nodes[graph.graph["relations"][1]["id"]]["attributes"]["provenance"]) == 1
+    assert graph.has_edge(graph.graph["relations"][1]["id"], graph.graph["relations"][0]["id"])
 
 
 def test_validation_detects_missing_roles_bad_types_and_dangling_references() -> None:
@@ -227,12 +226,12 @@ def test_recursive_graph_round_trips_with_cycles_and_edge_attributes() -> None:
     assert restored["r1"]["a"]["argument:r1:0"]["ordering"] == 1
 
 
-def test_trace_and_document_ids_are_stable() -> None:
+def test_graph_metadata_and_document_ids_are_stable() -> None:
     extraction = {"entities": [], "relations": []}
     text = "source"
-    trace = make_transformer(extraction).fit([text]).transform_with_trace([text])[0]
-    assert trace.graph.graph["document_id"] == f"document-{sha256(text.encode()).hexdigest()[:12]}"
-    assert [stat.stage for stat in trace.stats] == ["segment", "summarize", "normalize", "decompose", "extract", "resolve", "integrate", "total"]
+    graph = make_transformer(extraction).transform([text])[0]
+    assert graph.graph["document_id"] == f"document-{sha256(text.encode()).hexdigest()[:12]}"
+    assert [stat["stage"] for stat in graph.graph["stats"]] == ["segment", "summarize", "normalize", "decompose", "extract", "resolve", "integrate", "total"]
 
 
 def test_segmenter_and_resolver() -> None:

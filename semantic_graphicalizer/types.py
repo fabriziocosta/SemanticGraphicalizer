@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import networkx as nx
-
 
 @dataclass(frozen=True)
 class Chunk:
@@ -72,16 +70,3 @@ class StageStat:
     output_count: int
     chunk_id: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class DocumentTrace:
-    document_id: str
-    text: str
-    chunks: list[Chunk]
-    summaries: list[Summary]
-    normalized: list[NormalizedText]
-    entities: list[Entity]
-    relations: list[RelationInstance]
-    graph: nx.MultiDiGraph
-    stats: list[StageStat] = field(default_factory=list)

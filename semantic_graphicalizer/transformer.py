@@ -10,7 +10,6 @@ from typing import Any
 
 import networkx as nx
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.utils.validation import check_is_fitted
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
 from .abstract_graph import InterpretationMode, ParallelEdgePolicy, semantic_graph_to_abstract_graph
@@ -29,7 +28,6 @@ from .pipeline import (
     Segmenter,
     SemanticPipeline,
 )
-from .types import DocumentTrace
 from .visualization import display_graph
 
 
@@ -70,8 +68,14 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         self.verbose = verbose
 
     def fit(self, X: Iterable[str], y: Any = None) -> "SemanticGraphicalizer":
-        del y
-        documents = self._validate_input(X)
+        # This transformer has no corpus-dependent learned state. ``fit`` is
+        # retained for sklearn compatibility and prepares the configured
+        # pipeline; document validation happens when documents are transformed.
+        del X, y
+        self._initialize_pipeline()
+        return self
+
+    def _initialize_pipeline(self) -> None:
         self.ontology_ = load_ontology(self.ontology)
         self.prompts_ = load_prompts(self.prompts)
         segmenter = self.segmenter or ParagraphWindowSegmenter(self.max_chunk_chars, self.chunk_overlap)
@@ -92,8 +96,10 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 f"[SemanticGraphicalizer] ready: model={type(model).__name__}, "
                 f"ontology={self.ontology_.name}, domain={self.prompts_.domain}"
             )
-        self.n_documents_in_fit_ = len(documents)
-        return self
+
+    def _ensure_pipeline(self) -> None:
+        if not all(hasattr(self, name) for name in ("ontology_", "prompts_", "pipeline_")):
+            self._initialize_pipeline()
 
     @staticmethod
     def _validate_input(X: Iterable[str]) -> list[str]:
@@ -131,12 +137,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         return document_ids
 
     def transform(self, X: Iterable[str]) -> list[nx.MultiDiGraph]:
-        traces = self.transform_with_trace(X)
-        return [trace.graph for trace in traces]
-
-    def transform_with_trace(self, X: Iterable[str]) -> list[DocumentTrace]:
-        check_is_fitted(self, ["ontology_", "prompts_", "pipeline_"])
         documents = self._validate_input(X)
+        self._ensure_pipeline()
         document_ids = self._document_ids(documents)
         return [
             self.pipeline_.process(document_id, document)
@@ -169,33 +171,33 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
 
     @staticmethod
     def _embedding_targets(
-        values: DocumentTrace | nx.Graph | Iterable[DocumentTrace | nx.Graph],
-    ) -> list[DocumentTrace | nx.Graph]:
-        if isinstance(values, (DocumentTrace, nx.Graph)):
+        values: nx.Graph | Iterable[nx.Graph],
+    ) -> list[nx.Graph]:
+        if isinstance(values, nx.Graph):
             return [values]
         if isinstance(values, (str, bytes)):
-            raise TypeError("values must contain DocumentTrace or NetworkX graph objects")
+            raise TypeError("values must contain NetworkX graph objects")
         try:
             targets = list(values)
         except TypeError as exc:
-            raise TypeError("values must be a DocumentTrace, NetworkX graph, or iterable of either") from exc
-        if not all(isinstance(value, (DocumentTrace, nx.Graph)) for value in targets):
-            raise TypeError("values must contain only DocumentTrace or NetworkX graph objects")
+            raise TypeError("values must be a NetworkX graph or iterable of graphs") from exc
+        if not all(isinstance(value, nx.Graph) for value in targets):
+            raise TypeError("values must contain only NetworkX graph objects")
         return targets
 
     def compute_embeddings(
         self,
-        values: DocumentTrace | nx.Graph | Iterable[DocumentTrace | nx.Graph],
+        values: nx.Graph | Iterable[nx.Graph],
         *,
         embedding_attribute: str = "embedding",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
         skip_matching: bool = False,
-    ) -> list[DocumentTrace | nx.Graph]:
+    ) -> list[nx.Graph]:
         """Compute and attach one text embedding to every graph node.
 
-        ``values`` may contain traces or NetworkX graphs. Inputs are mutated
-        in place and returned as a list. Vectors are stored on each node under
+        Inputs are mutated in place and returned as a list. Vectors are stored
+        on each node under
         ``embedding_attribute``; the default is ``graph.nodes[node_id]["embedding"]``.
         """
 
@@ -242,7 +244,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         ).hexdigest()
         records: list[tuple[nx.Graph, Any, str]] = []
         for value in targets:
-            graph = value.graph if isinstance(value, DocumentTrace) else value
+            graph = value
             for node_id, data in graph.nodes(data=True):
                 text = text_builder(node_id, data)
                 if not isinstance(text, str) or not text.strip():
@@ -304,7 +306,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
 
     def to_abstract_graph(
         self,
-        graph_or_trace: nx.MultiDiGraph | DocumentTrace,
+        graph: nx.MultiDiGraph,
         *,
         embed_nodes: bool = False,
         embedding_key: str = "embedding",
@@ -316,7 +318,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> Any:
-        """Convert a semantic graph or trace to an optional AbstractGraph.
+        """Convert a semantic graph to an optional AbstractGraph.
 
         Set ``embed_nodes=True`` to compute missing or stale node text embeddings
         before conversion. Matching embeddings are reused. By default, each
@@ -326,12 +328,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         first, or raise an error.
         """
 
-        if isinstance(graph_or_trace, DocumentTrace):
-            graph = graph_or_trace.graph
-        elif isinstance(graph_or_trace, nx.MultiDiGraph):
-            graph = graph_or_trace
-        else:
-            raise TypeError("graph_or_trace must be a MultiDiGraph or DocumentTrace")
+        if not isinstance(graph, nx.MultiDiGraph):
+            raise TypeError("graph must be a NetworkX MultiDiGraph")
         if not isinstance(embed_nodes, bool):
             raise TypeError("embed_nodes must be a bool")
         if parallel_edge_policy not in {"combine", "first", "error"}:
@@ -343,7 +341,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise ValueError("interpretation_mode must be 'per_entity' or 'by_chunk_and_type'")
         if embed_nodes:
             self.compute_embeddings(
-                graph_or_trace,
+                graph,
                 embedding_attribute=embedding_key,
                 node_text_fn=node_text_fn,
                 batch_size=batch_size,
@@ -361,7 +359,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
 
     def to_abstract_graphs(
         self,
-        graphs_or_traces: Iterable[nx.MultiDiGraph | DocumentTrace],
+        graphs: Iterable[nx.MultiDiGraph],
         *,
         embed_nodes: bool = False,
         embedding_key: str = "embedding",
@@ -373,29 +371,22 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
     ) -> list[Any]:
-        """Convert multiple semantic graphs or traces to AbstractGraphs.
+        """Convert multiple semantic graphs to AbstractGraphs.
 
         When ``embed_nodes=True``, node embeddings are computed across all
         inputs in batches before conversion. ``interpretation_mode`` is applied
         to every result. Results preserve input order.
         """
 
-        if isinstance(graphs_or_traces, (str, bytes)):
-            raise TypeError("graphs_or_traces must contain MultiDiGraph or DocumentTrace objects")
+        if isinstance(graphs, (str, bytes)):
+            raise TypeError("graphs must contain NetworkX MultiDiGraph objects")
         try:
-            values = list(graphs_or_traces)
+            values = list(graphs)
         except TypeError as exc:
-            raise TypeError("graphs_or_traces must be an iterable of MultiDiGraph or DocumentTrace objects") from exc
+            raise TypeError("graphs must be an iterable of NetworkX MultiDiGraph objects") from exc
 
-        for value in values:
-            if isinstance(value, DocumentTrace):
-                graph = value.graph
-            elif isinstance(value, nx.MultiDiGraph):
-                graph = value
-            else:
-                raise TypeError("graphs_or_traces must contain only MultiDiGraph or DocumentTrace objects")
-            if not isinstance(graph, nx.MultiDiGraph):
-                raise TypeError("each input graph must be a NetworkX MultiDiGraph")
+        if not all(isinstance(graph, nx.MultiDiGraph) for graph in values):
+            raise TypeError("graphs must contain only NetworkX MultiDiGraph objects")
 
         if not isinstance(embed_nodes, bool):
             raise TypeError("embed_nodes must be a bool")
@@ -457,10 +448,10 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         chunk-and-type grouping for each returned graph.
         """
 
-        traces = self.transform_with_trace(X)
+        graphs = self.transform(X)
         return [
             self.to_abstract_graph(
-                trace,
+                graph,
                 embed_nodes=embed_nodes,
                 embedding_key=embedding_key,
                 chunk_key=chunk_key,
@@ -471,16 +462,16 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 node_text_fn=node_text_fn,
                 batch_size=batch_size,
             )
-            for trace in traces
+            for graph in graphs
         ]
 
     def display(
         self,
-        graph_or_trace: nx.Graph | DocumentTrace,
+        graph: nx.Graph,
         *,
         mode: str = "dynamic",
         **kwargs: Any,
     ) -> Any:
         """Return a dynamic D3, static SVG, or indented text visualization."""
 
-        return display_graph(graph_or_trace, mode=mode, **kwargs)
+        return display_graph(graph, mode=mode, **kwargs)

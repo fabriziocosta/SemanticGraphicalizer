@@ -37,12 +37,10 @@ from .abstract_graph import (
     InterpretationMode,
     ParallelEdgePolicy,
     semantic_graph_to_abstract_graph,
-    trace_to_abstract_graph,
 )
 from .types import (
     Argument,
     Chunk,
-    DocumentTrace,
     Entity,
     NormalizedText,
     RelationInstance,
@@ -78,7 +76,6 @@ __all__ = [
     "DEFAULT_OPENAI_MODEL",
     "DEFAULT_AESOP_CACHE_DIR",
     "DEFAULT_AESOP_STORIES_CACHE_FILE",
-    "DocumentTrace",
     "D3_CDN_URL",
     "Entity",
     "AESOP_GUTENBERG_URL",
@@ -99,7 +96,6 @@ __all__ = [
     "ParallelEdgePolicy",
     "SemanticGraphicalizer",
     "semantic_graph_to_abstract_graph",
-    "trace_to_abstract_graph",
     "SemanticPipeline",
     "Summary",
     "StageStat",

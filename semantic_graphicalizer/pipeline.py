@@ -7,7 +7,7 @@ import re
 import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 import networkx as nx
@@ -16,7 +16,7 @@ from .config import OntologyConfig, PromptConfig
 from .exceptions import StageOutputError
 from .graph import GraphValidationError, materialize_graph
 from .model import ModelClient, as_model_client
-from .types import Argument, Chunk, DocumentTrace, Entity, NormalizedText, RelationInstance, StageStat, Summary
+from .types import Argument, Chunk, Entity, NormalizedText, RelationInstance, StageStat, Summary
 
 
 class Segmenter(Protocol):
@@ -363,7 +363,7 @@ class SemanticPipeline:
             result.append(RelationInstance(relation_id, entity_type, relation_name, tuple(arguments), attributes))
         return result
 
-    def process(self, document_id: str, text: str) -> DocumentTrace:
+    def process(self, document_id: str, text: str) -> nx.MultiDiGraph:
         total = time.perf_counter()
         stats: list[StageStat] = []
         started = time.perf_counter()
@@ -388,4 +388,12 @@ class SemanticPipeline:
             raise StageOutputError("integrate", str(exc), document_id=document_id, chunk_id=f"{document_id}:integrate") from exc
         self._stat(stats, document_id, "integrate", started, len(relations), graph.number_of_edges(), details={"nodes": graph.number_of_nodes(), "edges": graph.number_of_edges()})
         self._stat(stats, document_id, "total", total, 1, 1, details={"chunks": len(chunks), "entities": len(unique_entities), "relations": len(relations), "nodes": graph.number_of_nodes(), "edges": graph.number_of_edges()})
-        return DocumentTrace(document_id, text, chunks, summaries, normalized, list(unique_entities.values()), relations, graph, stats)
+        graph.graph.update(
+            chunks=[asdict(chunk) for chunk in chunks],
+            summaries=[{"chunk": asdict(summary.chunk), "text": summary.text} for summary in summaries],
+            normalized=[{"chunk": asdict(item.chunk), "text": item.text} for item in normalized],
+            entities=[asdict(entity) for entity in unique_entities.values()],
+            relations=[asdict(relation) for relation in relations],
+            stats=[asdict(stat) for stat in stats],
+        )
+        return graph

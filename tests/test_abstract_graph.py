@@ -5,10 +5,8 @@ import numpy as np
 import pytest
 
 from semantic_graphicalizer import (
-    DocumentTrace,
     SemanticGraphicalizer,
     semantic_graph_to_abstract_graph,
-    trace_to_abstract_graph,
 )
 
 
@@ -101,14 +99,12 @@ def test_parallel_edge_error_and_embedding_dimension_validation():
         semantic_graph_to_abstract_graph(graph)
 
 
-def test_document_scope_fallback_and_trace_entry_point():
+def test_document_scope_fallback_from_graph_metadata():
     graph = nx.MultiDiGraph(document_id="doc")
     graph.add_node("one", id="one", type="Character", relation=None, attributes={})
     graph.add_node("two", id="two", type="Character", relation=None, attributes={})
-    trace = DocumentTrace("doc", "text", [], [], [], [], [], graph)
-
-    abstract = trace_to_abstract_graph(
-        trace, nbits=4, interpretation_mode="by_chunk_and_type"
+    abstract = semantic_graph_to_abstract_graph(
+        graph, nbits=4, interpretation_mode="by_chunk_and_type"
     )
     assert abstract.interpretation_graph.number_of_nodes() == 1
     data = next(iter(abstract.interpretation_graph.nodes(data=True)))[1]
@@ -120,26 +116,25 @@ def test_document_scope_fallback_and_trace_entry_point():
     }
 
 
-def test_transformer_embedding_is_opt_in_and_matching_vectors_are_reused():
+def test_graph_embedding_is_opt_in_and_matching_vectors_are_reused():
     graph = nx.MultiDiGraph(document_id="doc")
     graph.add_node("fox", id="fox", type="Character", relation=None, mentions=["fox"], attributes={})
-    trace = DocumentTrace("doc", "text", [], [], [], [], [], graph)
     embedder = FakeEmbedder()
     graphicalizer = make_graphicalizer(embedder)
 
-    no_embed = graphicalizer.to_abstract_graph(trace, nbits=4)
+    no_embed = graphicalizer.to_abstract_graph(graph, nbits=4)
     assert embedder.calls == []
     assert "attribute" not in no_embed.base_graph.nodes["fox"]
 
-    first = graphicalizer.to_abstract_graph(trace, embed_nodes=True, nbits=4)
+    first = graphicalizer.to_abstract_graph(graph, embed_nodes=True, nbits=4)
     assert len(embedder.calls) == 1
     assert first.base_graph.nodes["fox"]["attribute"].tolist() == [15.0, 1.0]
-    second = graphicalizer.to_abstract_graph(trace, embed_nodes=True, nbits=4)
+    second = graphicalizer.to_abstract_graph(graph, embed_nodes=True, nbits=4)
     assert len(embedder.calls) == 1
     assert second.base_graph.nodes["fox"]["attribute"].tolist() == [15.0, 1.0]
 
     graph.nodes["fox"]["mentions"] = ["red fox"]
-    graphicalizer.to_abstract_graph(trace, embed_nodes=True, nbits=4)
+    graphicalizer.to_abstract_graph(graph, embed_nodes=True, nbits=4)
     assert len(embedder.calls) == 2
 
 
@@ -157,9 +152,8 @@ def test_summed_abstractgraph_vectors_have_stable_width():
 def test_transform_abstract_convenience_and_lazy_optional_dependency(monkeypatch):
     graph = nx.MultiDiGraph(document_id="doc")
     graph.add_node("fox", id="fox", type="Character", relation=None, attributes={})
-    trace = DocumentTrace("doc", "text", [], [], [], [], [], graph)
     graphicalizer = make_graphicalizer()
-    monkeypatch.setattr(graphicalizer, "transform_with_trace", lambda _texts: [trace])
+    monkeypatch.setattr(graphicalizer, "transform", lambda _texts: [graph])
     assert len(graphicalizer.transform_abstract(["text"], nbits=4)) == 1
 
     import semantic_graphicalizer.abstract_graph as adapter

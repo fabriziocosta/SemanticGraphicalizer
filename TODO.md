@@ -9,15 +9,14 @@ not yet been verified or recorded.
 ### Implemented
 
 - `notebooks/aesop_graph_embeddings_clustering.ipynb` supports full-corpus and
-  three-tale smoke modes, checkpoints traces and direct-text vectors, and
+  three-tale smoke modes, checkpoints graphs and direct-text vectors, and
   compares AbstractGraph vectors with a direct-text baseline.
 - AbstractGraph conversion is available through the low-level functions and
   `SemanticGraphicalizer.to_abstract_graph`, `to_abstract_graphs`, and
   `transform_abstract` methods. Embeddings are optional and source vectors
   stored under `embedding` are mapped to AbstractGraph's base-node `attribute`.
-- AbstractGraph core `AbstractGraphTransformer` batch-vectorizes pre-built
-  AbstractGraphs, preserving their attribute functions and returning one sparse
-  graph-level row per input.
+- The notebook passes pre-built AbstractGraphs directly to
+  `AbstractGraphTransformer` for vectorization and graph-level pooling.
 - The base graph retains reified nodes. Its discrete node label is the
   relation name (empty for nodes without a relation); entity types label the
   interpretation nodes. `per_entity` is the default interpretation mode,
@@ -55,7 +54,7 @@ not included in either the node embedding inputs or the direct-text baseline.
 ## Deliverables
 
 - [x] `notebooks/aesop_graph_embeddings_clustering.ipynb` with full and
-  small-corpus modes and checkpointed traces and embeddings.
+  small-corpus modes and checkpointed graphs and embeddings.
 - [x] Optional SemanticGraphicalizer adapter for `abstractgraph.AbstractGraph`
   with on-demand node embedding.
 - [x] Focused offline tests using deterministic model and embedding clients.
@@ -69,15 +68,16 @@ not included in either the node embedding inputs or the direct-text baseline.
   configurable small limit in smoke mode.
 - Assign stable tale IDs from source order and a content hash. Keep title,
   character count, word count, and source hash as evaluation metadata.
-- Run `transform_with_trace` for each tale and preserve the canonical recursive
-  `MultiDiGraph` as the input to the adapter. Checkpoint each completed trace so
+- Run `transform` for each tale and preserve the canonical recursive
+  `MultiDiGraph` as the input to the adapter. Checkpoint each completed graph so
   a failed model request can resume without reprocessing earlier tales.
+  Intermediate pipeline records and stage statistics are stored in `graph.graph`.
 
 ### AbstractGraph conversion and node embeddings
 
-- Provide `semantic_graph_to_abstract_graph(...)` and
-  `trace_to_abstract_graph(...)`, plus `SemanticGraphicalizer.to_abstract_graph`
-  and `transform_abstract` convenience methods.
+- Provide `semantic_graph_to_abstract_graph(...)` and the
+  `SemanticGraphicalizer.to_abstract_graph` and `transform_abstract`
+  convenience methods.
 - Conversion uses entity `relation` as the base-node label, argument `role` as
   the base-edge label, and provenance plus `Entity.type` to create local
   interpretation nodes. If chunk provenance is absent, group at document scope.
@@ -98,9 +98,9 @@ not included in either the node embedding inputs or the direct-text baseline.
 
 - Create one AbstractGraph per tale with the existing sum attribute aggregation
   and hash-based interpretation labels.
-- Use `AbstractGraphTransformer` to batch-vectorize the pre-built per-tale
-  AbstractGraphs, preserving their attribute functions and sparse graph-level
-  rows through scaling and clustering.
+- Pass the pre-built per-tale AbstractGraphs directly to
+  `AbstractGraphTransformer` for vectorization and graph-level pooling before
+  scaling and clustering.
 - Embed the complete tale text separately for a direct-text baseline. Split
   long tales into deterministic 6,000-character, word-boundary chunks, embed
   those chunks, then mean-pool their vectors. This baseline does not use graph
@@ -129,7 +129,7 @@ not included in either the node embedding inputs or the direct-text baseline.
   summed-vector width.
 - Verify ordinary package import and graph transformation without the optional
   dependency; run adapter tests with the dependency installed.
-- The notebook must run top-to-bottom in small-corpus mode, produce one trace,
+- The notebook must run top-to-bottom in small-corpus mode, produce one graph with pipeline metadata,
   one AbstractGraph, and one vector per selected tale, and compare graph and
   text clustering. API-backed cells must clearly identify embedding costs.
-- Keep generated vectors, traces, and credentials out of version control.
+- Keep generated vectors, graphs, and credentials out of version control.

@@ -2,7 +2,7 @@
 
 Ontology-guided text graphicalization exposed as a scikit-learn-compatible transformer.
 
-The transformer accepts complete documents and returns one `networkx.MultiDiGraph` per document. Model execution is intentionally provider-neutral: pass an object with `generate(...)` or a compatible callable.
+The transformer accepts complete documents and returns one `networkx.MultiDiGraph` per document. Call `transform` directly; the configured pipeline is initialized on its first use. Model execution is intentionally provider-neutral: pass an object with `generate(...)` or a compatible callable.
 
 ```python
 from semantic_graphicalizer import SemanticGraphicalizer
@@ -11,7 +11,7 @@ graphicalizer = SemanticGraphicalizer(
     ontology="configs/ontologies/aesop.yaml",
     prompts="configs/prompts/aesop.yaml",
 )
-graphs = graphicalizer.fit_transform(["The fox met the crow."])
+graphs = graphicalizer.transform(["The fox met the crow."])
 ```
 
 When `model` is omitted, the package uses OpenAI `gpt-4.1-mini` through the
@@ -29,8 +29,10 @@ reified relation nodes have a configured `relation` and outgoing
 the complete `attributes` mapping are preserved alongside document metadata
 and provenance. Relation nodes can point to other relation nodes, so causal,
 temporal, evidential, logical, state, and measurement assertions use the same
-graph mechanism. `transform_with_trace` exposes extracted `entities`,
-`relations`, stage statistics, and the canonical graph.
+graph mechanism. Pipeline details are stored on each graph's global metadata
+dictionary (`graph.graph`): `chunks`, `summaries`, `normalized`, `entities`,
+`relations`, and per-stage `stats`. The graph itself remains the single result
+object.
 
 Use `project_binary_relations(graph, ontology)` for an explicit, schema-driven
 direct-edge view. Use `graph_to_dict` and `graph_from_dict` for JSON-safe
@@ -79,14 +81,14 @@ graphicalizer.display(graphs[0], mode="text")
 ```
 
 The default OpenAI text embedder can vectorize the available text for every
-node in traces or graphs. Vectors are attached in place under the `embedding`
+node in graphs. Vectors are attached in place under the `embedding`
 node attribute; pass `embedder=...` to inject another provider or
 `node_text_fn=...` to control the text sent for each node:
 
 ```python
-traces = graphicalizer.transform_with_trace(["The fox met the crow."])
-embedded_traces = graphicalizer.compute_embeddings(traces)
-vector = embedded_traces[0].graph.nodes["some-node"]["embedding"]
+graphs = graphicalizer.transform(["The fox met the crow."])
+embedded_graphs = graphicalizer.compute_embeddings(graphs)
+vector = embedded_graphs[0].nodes["some-node"]["embedding"]
 ```
 
 The default embedding model is `text-embedding-3-small` and uses the
@@ -120,8 +122,7 @@ The default view shows ontology values plus source mentions. Use
 roles.
 
 Progress reporting is enabled by default. Set `verbose=False` to suppress it;
-stage timings and counts remain available on each `DocumentTrace.stats` item
-when using `transform_with_trace`.
+stage timings and counts remain available under `graph.graph["stats"]`.
 
 Long paragraphs are split at word boundaries, and transient model-provider
 failures are retried with exponential backoff. Configure `max_retries` and
@@ -131,11 +132,11 @@ limits; set `max_retries=0` to disable retries.
 ## AbstractGraph adapter
 
 Install the optional integration with `pip install -e '.[abstractgraph]'`.
-Convert a trace to an AbstractGraph, optionally computing node text embeddings
+Convert a graph to an AbstractGraph, optionally computing node text embeddings
 during conversion:
 
 ```python
-abstract = graphicalizer.to_abstract_graph(trace, embed_nodes=True)
+abstract = graphicalizer.to_abstract_graph(graphs[0], embed_nodes=True)
 matrix = abstract.to_array()
 story_vector = matrix.sum(axis=0)
 ```
@@ -145,20 +146,19 @@ an undirected base graph; reciprocal semantic edges are combined and their
 original endpoints remain recorded in `semantic_edges`:
 
 ```python
-abstract = graphicalizer.to_abstract_graph(trace, preserve_direction=False)
+abstract = graphicalizer.to_abstract_graph(graphs[0], preserve_direction=False)
 ```
 
-Convert multiple existing graphs or traces in input order with
+Convert multiple existing graphs in input order with
 `to_abstract_graphs`. When `embed_nodes=True`, node texts from the full input
 collection are embedded in batches before conversion:
 
 ```python
-abstract_graphs = graphicalizer.to_abstract_graphs(traces, embed_nodes=True)
+abstract_graphs = graphicalizer.to_abstract_graphs(graphs, embed_nodes=True)
 ```
 
 `embed_nodes` defaults to `False`, so conversion does not make embedding API
 requests unless requested. Matching vectors are reused when their text and
 embedding configuration are unchanged. Direct conversion helpers are also
-available as `semantic_graph_to_abstract_graph(graph)` and
-`trace_to_abstract_graph(trace)`; they use embeddings already attached to the
-semantic graph.
+available as `semantic_graph_to_abstract_graph(graph)`; this uses embeddings
+already attached to the semantic graph.

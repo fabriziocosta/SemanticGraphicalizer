@@ -43,8 +43,8 @@ The following parts of the proposal are implemented:
 * YAML-backed ontology and prompt loading, including ontology terms,
   argument roles, relation schemas, allowed argument types, cardinalities, and
   optional binary projections;
-* chunk, summary, normalized-text, entity, argument, relation, and document
-  trace data structures;
+* typed chunk, summary, normalized-text, entity, argument, relation, and stage
+  statistic records stored with each graph;
 * paragraph-aware segmentation with character limits and optional overlap;
 * strict structured-output schemas for all five model stages:
   `summarize`, `normalize`, `decompose`, `extract`, and `resolve`;

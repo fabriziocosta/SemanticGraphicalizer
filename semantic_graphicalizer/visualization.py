@@ -79,10 +79,7 @@ def _wrap_text(value: Any, max_width: int) -> str:
 def _graph_from_value(value: Any) -> nx.Graph:
     if isinstance(value, _NETWORKX_GRAPH_TYPES):
         return value
-    graph = getattr(value, "graph", None)
-    if not isinstance(graph, _NETWORKX_GRAPH_TYPES):
-        raise TypeError("value must be a NetworkX graph or a DocumentTrace")
-    return graph
+    raise TypeError("value must be a NetworkX graph")
 
 
 def _binary_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
@@ -333,7 +330,7 @@ def graph_to_d3_data(
     max_width: int = 80,
     show_derived_links: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Convert a graph or trace into D3 data with wrapped multiline labels."""
+    """Convert a graph into D3 data with wrapped multiline labels."""
 
     graph = _graph_from_value(value)
     max_width = _validate_max_width(max_width)
