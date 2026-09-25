@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from scipy.sparse import csr_matrix, vstack
 from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import (
@@ -27,6 +26,7 @@ from semantic_graphicalizer import (
     OpenAIEmbeddingClient,
     SemanticGraphicalizer,
     load_aesop_fables,
+    vectorize_abstract_graphs,
 )
 from semantic_graphicalizer.model import as_embedding_client
 
@@ -261,18 +261,7 @@ def run_experiment(
     abstract_graphs = graphicalizer.to_abstract_graphs(
         graphs, embed_nodes=embed_nodes, **abstract_settings
     )
-    # ``to_abstract_graphs`` has already built and populated each AbstractGraph.
-    # AbstractGraphTransformer accepts raw NetworkX graphs and wraps them in a
-    # new AbstractGraph, so passing these objects to it attempts to wrap an
-    # AbstractGraph as a NetworkX graph. Pool the per-node features from each
-    # converted graph directly to get one sparse row per tale.
-    graph_matrix = vstack(
-        [
-            csr_matrix(abstract_graph.to_array().sum(axis=0))
-            for abstract_graph in abstract_graphs
-        ],
-        format="csr",
-    )
+    graph_matrix = vectorize_abstract_graphs(abstract_graphs, nbits=nbits)
 
     # Persist any node embeddings computed during AbstractGraph conversion.
     for graph, row in zip(graphs, metadata):
@@ -298,7 +287,11 @@ def run_experiment(
         "embedding_model": embedding_model,
         "embed_nodes": embed_nodes,
         "abstractgraph": abstract_settings,
-        "graph_vectorizer": {"pooling": "sum", "return_dense": False},
+        "graph_vectorizer": {
+            "transformer": "AbstractGraphTransformer",
+            "interpretation": "per_entity",
+            "return_dense": False,
+        },
         "text_baseline": {"chunk_chars": 6000, "pooling": "mean"},
         "random_seed": random_seed,
     }

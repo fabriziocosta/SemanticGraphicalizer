@@ -37,6 +37,7 @@ from .abstract_graph import (
     InterpretationMode,
     ParallelEdgePolicy,
     semantic_graph_to_abstract_graph,
+    vectorize_abstract_graphs,
 )
 from .types import (
     Argument,
@@ -96,6 +97,7 @@ __all__ = [
     "ParallelEdgePolicy",
     "SemanticGraphicalizer",
     "semantic_graph_to_abstract_graph",
+    "vectorize_abstract_graphs",
     "SemanticPipeline",
     "Summary",
     "StageStat",

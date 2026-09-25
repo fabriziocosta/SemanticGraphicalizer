@@ -7,6 +7,7 @@ import pytest
 from semantic_graphicalizer import (
     SemanticGraphicalizer,
     semantic_graph_to_abstract_graph,
+    vectorize_abstract_graphs,
 )
 
 
@@ -147,6 +148,22 @@ def test_summed_abstractgraph_vectors_have_stable_width():
     first_vector = np.asarray(first.to_array().sum(axis=0)).ravel()
     second_vector = np.asarray(second.to_array().sum(axis=0)).ravel()
     assert first_vector.shape == second_vector.shape == (16 * 2,)
+
+
+def test_graph_level_transformer_uses_simple_base_graphs_for_abstract_graphs():
+    abstract = semantic_graph_to_abstract_graph(graph_with_chunks(), nbits=4)
+    from abstractgraph import vectorize
+
+    expected = np.asarray(
+        vectorize(abstract.copy(), nbits=4, return_dense=False).sum(axis=0)
+    ).ravel()
+    interpretation_count = abstract.interpretation_graph.number_of_nodes()
+
+    matrix = vectorize_abstract_graphs([abstract], nbits=4)
+
+    assert matrix.shape == (1, expected.size)
+    np.testing.assert_allclose(matrix.toarray()[0], expected)
+    assert abstract.interpretation_graph.number_of_nodes() == interpretation_count
 
 
 def test_transform_abstract_convenience_and_lazy_optional_dependency(monkeypatch):

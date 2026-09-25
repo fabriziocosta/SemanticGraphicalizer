@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import networkx as nx
@@ -262,3 +262,36 @@ def semantic_graph_to_abstract_graph(
         interpretation_data["label"] = entity_type
         interpretation_data["display_label"] = entity_type
     return abstract
+
+
+def vectorize_abstract_graphs(abstract_graphs: Sequence[Any], *, nbits: int = 14) -> Any:
+    """Vectorize pre-built AbstractGraphs with the library transformer.
+
+    The transformer preserves each AbstractGraph's existing base graph,
+    interpretation mappings, and attribute function when given AbstractGraph
+    inputs directly.
+    """
+
+    try:
+        from abstractgraph import AbstractGraph, AbstractGraphTransformer
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise ImportError(
+            "AbstractGraph vectorization requires the optional 'abstractgraph' package. "
+            "Install SemanticGraphicalizer with the 'abstractgraph' extra."
+        ) from exc
+
+    if isinstance(abstract_graphs, (str, bytes)):
+        raise TypeError("abstract_graphs must be a sequence of AbstractGraph objects")
+    values = list(abstract_graphs)
+    if not all(isinstance(value, AbstractGraph) for value in values):
+        raise TypeError("abstract_graphs must contain only AbstractGraph objects")
+    if not isinstance(nbits, int) or isinstance(nbits, bool) or nbits < 2:
+        raise ValueError("nbits must be an integer of at least 2")
+    transformer = AbstractGraphTransformer(
+        nbits=nbits,
+        # Direct AbstractGraph inputs bypass decomposition in the transformer.
+        decomposition_function=None,  # type: ignore[arg-type]
+        return_dense=False,
+        n_jobs=1,
+    )
+    return transformer.fit_transform(values)
