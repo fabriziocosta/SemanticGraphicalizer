@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from scipy.sparse import vstack
+from scipy.sparse import csr_matrix, vstack
 from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import (
@@ -267,7 +267,10 @@ def run_experiment(
     # AbstractGraph as a NetworkX graph. Pool the per-node features from each
     # converted graph directly to get one sparse row per tale.
     graph_matrix = vstack(
-        [abstract_graph.to_array().sum(axis=0) for abstract_graph in abstract_graphs],
+        [
+            csr_matrix(abstract_graph.to_array().sum(axis=0))
+            for abstract_graph in abstract_graphs
+        ],
         format="csr",
     )
 
