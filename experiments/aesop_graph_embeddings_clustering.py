@@ -80,7 +80,10 @@ def _load_or_build_graphs(
     graph_config_hash: str,
 ) -> list[Any]:
     graphs = []
-    for story, row in zip(stories, metadata):
+    total = len(stories)
+    for index, (story, row) in enumerate(zip(stories, metadata), start=1):
+        print(f"\nStory {index}/{total}: {row['title']}")
+        print("-" * 80)
         checkpoint = cache_dir / f"{row['tale_id']}-{graph_config_hash[:8]}.graph.pkl"
         if checkpoint.exists():
             with checkpoint.open("rb") as handle:
