@@ -130,15 +130,14 @@ failures are retried with exponential backoff. Configure `max_retries` and
 `retry_backoff` on `SemanticGraphicalizer` when a provider needs different
 limits; set `max_retries=0` to disable retries.
 
-The final `resolve` stage adds supported cross-chunk or higher-order relations
-to the extracted graph. Its argument IDs are checked against the graph and
-other relations proposed in the same response. If an ID is invalid, the model
-gets corrective feedback and another attempt, up to `max_retries`. Invalid
-relations and any proposed relations that depend on them are then omitted.
-If the model fails or keeps returning structurally invalid resolve output, the
-optional resolve stage is skipped; the already extracted graph is still
-returned. This recovery applies to `resolve`, while invalid output from the
-required extraction stages continues to raise an error.
+The `extract` and `resolve` stages validate relation argument IDs through the
+same retry-and-recovery mechanism. If an ID is missing from the response or
+current graph, the model gets corrective feedback and another attempt, up to
+`max_retries`. Relations that still contain invalid references, along with
+relations that depend on them, are omitted. If a model fails or keeps
+returning structurally invalid output, the affected extraction chunk or
+optional resolve stage is skipped so the rest of the document can continue.
+Other pipeline stages retain their normal validation errors.
 
 ## AbstractGraph adapter
 

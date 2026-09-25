@@ -10,7 +10,6 @@ from semantic_graphicalizer import (
     load_ontology,
     project_binary_relations,
 )
-from semantic_graphicalizer.exceptions import StageOutputError
 from semantic_graphicalizer.graph import GraphValidationError, materialize_graph
 from semantic_graphicalizer.pipeline import ConservativeEntityResolver, ParagraphWindowSegmenter, _format_elapsed
 from semantic_graphicalizer.types import Argument, Entity, RelationInstance
@@ -241,7 +240,7 @@ def test_segmenter_and_resolver() -> None:
     assert _format_elapsed(61) == "1.0 min"
 
 
-def test_model_references_to_missing_entities_are_rejected() -> None:
+def test_model_references_to_missing_entities_are_dropped() -> None:
     extraction = {"entities": [], "relations": [{"id": "r", "type": "Event", "relation": "causes", "arguments": [{"role": "cause", "entity_id": "missing", "attributes": {}}, {"role": "effect", "entity_id": "missing", "attributes": {}}], "attributes": {}}]}
-    with pytest.raises(StageOutputError, match="missing Entity"):
-        make_transformer(extraction).fit_transform(["source"])
+    graph = make_transformer(extraction).fit_transform(["source"])[0]
+    assert graph.number_of_nodes() == 0

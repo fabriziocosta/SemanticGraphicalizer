@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import networkx as nx
 
@@ -17,6 +17,9 @@ from .exceptions import StageOutputError
 from .graph import GraphValidationError, materialize_graph
 from .model import ModelClient, as_model_client
 from .types import Argument, Chunk, Entity, NormalizedText, RelationInstance, StageStat, Summary
+
+
+_T = TypeVar("_T")
 
 
 class Segmenter(Protocol):
@@ -229,6 +232,73 @@ class SemanticPipeline:
                     time.sleep(self.retry_backoff * (2 ** attempt))
         raise AssertionError("unreachable")
 
+    def _generate_validated(
+        self,
+        stage: str,
+        values: dict[str, str],
+        chunk: Chunk,
+        validate: Callable[[Mapping[str, Any]], tuple[_T, str | None]],
+        fallback: _T,
+    ) -> _T:
+        """Retry semantically invalid stage output, then return a safe fallback."""
+
+        validation_feedback = None
+        for attempt in range(self.max_retries + 1):
+            request_values = dict(values)
+            if validation_feedback:
+                request_values["text"] = f"{values['text']}\n\nValidation feedback:\n{validation_feedback}"
+            try:
+                response = self._generate(stage, request_values, chunk)
+            except StageOutputError as exc:
+                if self.verbose:
+                    print(f"[{chunk.document_id} {chunk.chunk_id.rsplit(':', 1)[-1]}] {stage}: skipped after model failure: {exc}")
+                return fallback
+
+            try:
+                result, validation_feedback = validate(response)
+            except StageOutputError as exc:
+                if attempt == self.max_retries:
+                    if self.verbose:
+                        print(f"[{chunk.document_id} {chunk.chunk_id.rsplit(':', 1)[-1]}] {stage}: skipped after invalid output: {exc}")
+                    return fallback
+                validation_feedback = (
+                    f"Your previous response was invalid: {exc}. Correct it and return valid "
+                    "structured output using only configured ontology values and exact IDs."
+                )
+                continue
+
+            if validation_feedback and attempt == self.max_retries:
+                if self.verbose:
+                    print(
+                        f"[{chunk.document_id} {chunk.chunk_id.rsplit(':', 1)[-1]}] {stage}: "
+                        f"using filtered output after {attempt + 1} attempt(s): {validation_feedback}"
+                    )
+            if validation_feedback and attempt < self.max_retries:
+                continue
+            return result
+        return fallback
+
+    @staticmethod
+    def _drop_dependent_relations(
+        relations: dict[str, RelationInstance],
+        invalid_local_ids: set[str],
+        local_relation_ids: Mapping[str, str],
+    ) -> dict[str, RelationInstance]:
+        """Drop invalid relations and their transitive dependents."""
+
+        relations = dict(relations)
+        while True:
+            invalid_relation_ids = {local_relation_ids[local] for local in invalid_local_ids}
+            dependent = {
+                local for local, relation in relations.items()
+                if any(argument.entity_id in invalid_relation_ids for argument in relation.arguments)
+            }
+            if not dependent:
+                return relations
+            invalid_local_ids.update(dependent)
+            for local in dependent:
+                relations.pop(local, None)
+
     def _summarize(self, chunk: Chunk) -> Summary:
         response = self._generate("summarize", {"text": chunk.text, "ontology": self.ontology.as_prompt()}, chunk)
         return Summary(chunk, _text(response.get("summary"), "summary", "summarize", chunk.document_id, chunk.chunk_id))
@@ -260,170 +330,171 @@ class SemanticPipeline:
             result["relation_id"] = relation_id
         return result
 
-    def _extract(self, normalized: NormalizedText, assertions: Sequence[Mapping[str, Any]]) -> tuple[list[Entity], list[RelationInstance]]:
-        payload = json.dumps(list(assertions), ensure_ascii=False)
-        response = self._generate("extract", {"text": payload, "ontology": self.ontology.as_prompt()}, normalized.chunk)
-        raw_entities, raw_relations = response.get("entities"), response.get("relations")
-        if not isinstance(raw_entities, list) or not isinstance(raw_relations, list):
-            raise StageOutputError("extract", "'entities' and 'relations' must be lists", document_id=normalized.chunk.document_id, chunk_id=normalized.chunk.chunk_id)
-        local_entities: dict[str, str] = {}
-        entities: list[Entity] = []
-        for raw in raw_entities:
-            item = _as_mapping(raw, "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            local_id = _text(item.get("id"), "id", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            entity_type = _text(item.get("type"), "type", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            if entity_type not in self.ontology.term_ids:
-                raise StageOutputError("extract", f"unknown Entity type '{entity_type}'", document_id=normalized.chunk.document_id, chunk_id=normalized.chunk.chunk_id)
-            mention = _text(item.get("mention"), "mention", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            key = item.get("key")
-            if key is not None:
-                key = _text(key, "key", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            entity_id = self.resolver.resolve(entity_type, mention, key)
-            local_entities[local_id] = entity_id
-            attributes = _attrs(item.get("attributes", {}), "attributes", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            mentions = attributes.get("mentions")
-            if not isinstance(mentions, list):
-                mentions = []
-                attributes["mentions"] = mentions
-            mentions.append(mention)
+    def _parse_relation_candidates(
+        self,
+        raw_relations: Sequence[Any],
+        local_relation_ids: Mapping[str, str],
+        reference_ids: Mapping[str, str],
+        stage: str,
+        chunk: Chunk,
+        source_text: str,
+    ) -> tuple[list[RelationInstance], str | None]:
+        candidates: dict[str, RelationInstance] = {}
+        invalid_local_ids: set[str] = set()
+        invalid_references: set[str] = set()
+        document_id = chunk.document_id
+        chunk_id = chunk.chunk_id
+
+        for index, raw in enumerate(raw_relations):
+            item = _as_mapping(raw, stage, document_id, chunk_id)
+            local = _text(item.get("id", f"relation-{index}"), "id", stage, document_id, chunk_id)
+            relation_id = local_relation_ids[local]
+            entity_type = _text(item.get("type"), "type", stage, document_id, chunk_id)
+            relation_name = _text(item.get("relation"), "relation", stage, document_id, chunk_id)
+            if entity_type not in self.ontology.term_ids or relation_name not in self.ontology.relation_ids:
+                raise StageOutputError(stage, f"unknown relation type or relation '{entity_type}/{relation_name}'", document_id=document_id, chunk_id=chunk_id)
+            raw_arguments = item.get("arguments")
+            if not isinstance(raw_arguments, list):
+                raise StageOutputError(stage, "relation 'arguments' must be a list", document_id=document_id, chunk_id=chunk_id)
+
+            arguments: list[Argument] = []
+            invalid_relation = False
+            for raw_argument in raw_arguments:
+                argument = _as_mapping(raw_argument, stage, document_id, chunk_id)
+                role = _text(argument.get("role"), "role", stage, document_id, chunk_id)
+                reference = _text(argument.get("entity_id"), "entity_id", stage, document_id, chunk_id)
+                target_id = reference_ids.get(reference)
+                if target_id is None:
+                    invalid_relation = True
+                    invalid_references.add(reference)
+                    continue
+                arguments.append(Argument(role, target_id, _attrs(argument.get("attributes", {}), "attributes", stage, document_id, chunk_id)))
+
+            attributes = _attrs(item.get("attributes", {}), "attributes", stage, document_id, chunk_id)
             provenance = attributes.get("provenance")
             if not isinstance(provenance, list):
                 provenance = []
                 attributes["provenance"] = provenance
-            provenance.append(self._provenance(normalized.chunk, normalized.chunk.text, mention=mention))
-            entities.append(Entity(entity_id, entity_type, None, attributes))
-        local_relations = {}
-        for raw in raw_relations:
-            item = _as_mapping(raw, "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            local = _text(item.get("id"), "id", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            local_relations[local] = f"{normalized.chunk.chunk_id}:relation:{local}"
-        relations: list[RelationInstance] = []
-        for raw in raw_relations:
-            item = _as_mapping(raw, "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            local = _text(item.get("id"), "id", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            relation_id = local_relations[local]
-            entity_type = _text(item.get("type"), "type", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            relation_name = _text(item.get("relation"), "relation", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            if entity_type not in self.ontology.term_ids or relation_name not in self.ontology.relation_ids:
-                raise StageOutputError("extract", f"unknown relation type or relation '{entity_type}/{relation_name}'", document_id=normalized.chunk.document_id, chunk_id=normalized.chunk.chunk_id)
-            raw_arguments = item.get("arguments")
-            if not isinstance(raw_arguments, list):
-                raise StageOutputError("extract", "relation 'arguments' must be a list", document_id=normalized.chunk.document_id, chunk_id=normalized.chunk.chunk_id)
-            arguments: list[Argument] = []
-            for raw_argument in raw_arguments:
-                argument = _as_mapping(raw_argument, "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-                role = _text(argument.get("role"), "role", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-                reference = _text(argument.get("entity_id"), "entity_id", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-                target_id = local_entities.get(reference) or local_relations.get(reference)
-                if target_id is None:
-                    raise StageOutputError(
-                        "extract",
-                        f"relation '{local}' argument '{role}' references unknown object id '{reference}'; "
-                        "arguments must reference an entity or relation id from this extraction response",
-                        document_id=normalized.chunk.document_id,
-                        chunk_id=normalized.chunk.chunk_id,
-                    )
-                arguments.append(Argument(role, target_id, _attrs(argument.get("attributes", {}), "attributes", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)))
-            attributes = _attrs(item.get("attributes", {}), "attributes", "extract", normalized.chunk.document_id, normalized.chunk.chunk_id)
-            source_text = str(attributes.get("source_text", normalized.chunk.text))
-            attributes.setdefault("provenance", []).append(self._provenance(normalized.chunk, source_text, relation_id=relation_id))
-            relations.append(RelationInstance(relation_id, entity_type, relation_name, tuple(arguments), attributes))
-        return entities, relations
+            provenance.append(self._provenance(chunk, str(attributes.get("source_text", source_text)), relation_id=relation_id))
+            if invalid_relation:
+                invalid_local_ids.add(local)
+            else:
+                candidates[local] = RelationInstance(
+                    relation_id, entity_type, relation_name, tuple(arguments), attributes
+                )
+
+        candidates = self._drop_dependent_relations(candidates, invalid_local_ids, local_relation_ids)
+        feedback = None
+        if invalid_references:
+            feedback = (
+                "The previous response referenced unknown object IDs: "
+                f"{sorted(invalid_references)!r}. Valid IDs are {sorted(reference_ids)!r}. "
+                "Correct the response using exact IDs, and omit any relation whose arguments "
+                "cannot be referenced."
+            )
+        return list(candidates.values()), feedback
+
+    def _extract(self, normalized: NormalizedText, assertions: Sequence[Mapping[str, Any]]) -> tuple[list[Entity], list[RelationInstance]]:
+        document_id = normalized.chunk.document_id
+        chunk_id = normalized.chunk.chunk_id
+
+        def validate(response: Mapping[str, Any]) -> tuple[tuple[list[Entity], list[RelationInstance]], str | None]:
+            raw_entities, raw_relations = response.get("entities"), response.get("relations")
+            if not isinstance(raw_entities, list) or not isinstance(raw_relations, list):
+                raise StageOutputError("extract", "'entities' and 'relations' must be lists", document_id=document_id, chunk_id=chunk_id)
+
+            local_entities: dict[str, str] = {}
+            entities: list[Entity] = []
+            for raw in raw_entities:
+                item = _as_mapping(raw, "extract", document_id, chunk_id)
+                local_id = _text(item.get("id"), "id", "extract", document_id, chunk_id)
+                entity_type = _text(item.get("type"), "type", "extract", document_id, chunk_id)
+                if entity_type not in self.ontology.term_ids:
+                    raise StageOutputError("extract", f"unknown Entity type '{entity_type}'", document_id=document_id, chunk_id=chunk_id)
+                mention = _text(item.get("mention"), "mention", "extract", document_id, chunk_id)
+                key = item.get("key")
+                if key is not None:
+                    key = _text(key, "key", "extract", document_id, chunk_id)
+                entity_id = self.resolver.resolve(entity_type, mention, key)
+                local_entities[local_id] = entity_id
+                attributes = _attrs(item.get("attributes", {}), "attributes", "extract", document_id, chunk_id)
+                mentions = attributes.get("mentions")
+                if not isinstance(mentions, list):
+                    mentions = []
+                    attributes["mentions"] = mentions
+                mentions.append(mention)
+                provenance = attributes.get("provenance")
+                if not isinstance(provenance, list):
+                    provenance = []
+                    attributes["provenance"] = provenance
+                provenance.append(self._provenance(normalized.chunk, normalized.chunk.text, mention=mention))
+                entities.append(Entity(entity_id, entity_type, None, attributes))
+
+            local_relation_ids: dict[str, str] = {}
+            for index, raw in enumerate(raw_relations):
+                item = _as_mapping(raw, "extract", document_id, chunk_id)
+                local = _text(item.get("id"), "id", "extract", document_id, chunk_id)
+                if local in local_relation_ids:
+                    raise StageOutputError("extract", f"duplicate relation id '{local}'", document_id=document_id, chunk_id=chunk_id)
+                local_relation_ids[local] = f"{chunk_id}:relation:{local}"
+
+            reference_ids = {**local_entities, **local_relation_ids}
+            parsed_relations, feedback = self._parse_relation_candidates(
+                raw_relations, local_relation_ids, reference_ids, "extract", normalized.chunk, normalized.chunk.text
+            )
+            return (entities, parsed_relations), feedback
+
+        return self._generate_validated(
+            "extract",
+            {"text": json.dumps(list(assertions), ensure_ascii=False), "ontology": self.ontology.as_prompt()},
+            normalized.chunk,
+            validate,
+            ([], []),
+        )
 
     def _resolve(self, document_id: str, text: str, entities: Sequence[Entity], relations: Sequence[RelationInstance]) -> list[RelationInstance]:
         chunk = Chunk(document_id, f"{document_id}:resolve", text, 0, len(text))
-        context = {"entities": [entity.id for entity in entities], "relations": [{"id": relation.id, "type": relation.type, "relation": relation.relation, "arguments": [{"role": argument.role, "entity_id": argument.entity_id} for argument in relation.arguments]} for relation in relations]}
-        known = {entity.id for entity in entities} | {relation.id for relation in relations}
-        validation_feedback = None
-        for attempt in range(self.max_retries + 1):
-            request_context = dict(context)
-            if validation_feedback:
-                request_context["validation_feedback"] = validation_feedback
-            try:
-                response = self._generate("resolve", {"text": json.dumps(request_context, ensure_ascii=False), "ontology": self.ontology.as_prompt()}, chunk)
-            except StageOutputError as exc:
-                if self.verbose:
-                    print(f"[{document_id}] resolve: skipped optional resolution after model failure: {exc}")
-                return []
-            try:
-                raw_relations = response.get("relations")
-                if not isinstance(raw_relations, list):
-                    raise StageOutputError("resolve", "'relations' must be a list", document_id=document_id, chunk_id=chunk.chunk_id)
-                raw_relation_ids = {
-                    _text(_as_mapping(raw, "resolve", document_id, chunk.chunk_id).get("id", f"resolved-{index}"), "id", "resolve", document_id, chunk.chunk_id): f"{document_id}:resolved:{index}"
-                    for index, raw in enumerate(raw_relations)
+        context = {
+            "entities": [entity.id for entity in entities],
+            "relations": [
+                {
+                    "id": relation.id,
+                    "type": relation.type,
+                    "relation": relation.relation,
+                    "arguments": [
+                        {"role": argument.role, "entity_id": argument.entity_id}
+                        for argument in relation.arguments
+                    ],
                 }
-                known_with_resolved = known | set(raw_relation_ids.values())
-                result: dict[str, RelationInstance] = {}
-                invalid_local_ids: set[str] = set()
-                invalid_references: set[str] = set()
-                for index, raw in enumerate(raw_relations):
-                    item = _as_mapping(raw, "resolve", document_id, chunk.chunk_id)
-                    local = _text(item.get("id", f"resolved-{index}"), "id", "resolve", document_id, chunk.chunk_id)
-                    relation_id = raw_relation_ids[local]
-                    relation_name = _text(item.get("relation"), "relation", "resolve", document_id, chunk.chunk_id)
-                    entity_type = _text(item.get("type"), "type", "resolve", document_id, chunk.chunk_id)
-                    arguments = []
-                    invalid_relation = False
-                    for raw_argument in item.get("arguments", []):
-                        argument = _as_mapping(raw_argument, "resolve", document_id, chunk.chunk_id)
-                        target_id = _text(argument.get("entity_id"), "entity_id", "resolve", document_id, chunk.chunk_id)
-                        target_id = raw_relation_ids.get(target_id, target_id)
-                        if target_id not in known_with_resolved:
-                            invalid_relation = True
-                            invalid_references.add(target_id)
-                            continue
-                        arguments.append(Argument(_text(argument.get("role"), "role", "resolve", document_id, chunk.chunk_id), target_id, _attrs(argument.get("attributes", {}), "attributes", "resolve", document_id, chunk.chunk_id)))
-                    attributes = _attrs(item.get("attributes", {}), "attributes", "resolve", document_id, chunk.chunk_id)
-                    attributes.setdefault("provenance", []).append(self._provenance(chunk, str(attributes.get("source_text", text)), relation_id=relation_id))
-                    if invalid_relation:
-                        invalid_local_ids.add(local)
-                    else:
-                        result[local] = RelationInstance(relation_id, entity_type, relation_name, tuple(arguments), attributes)
+                for relation in relations
+            ],
+        }
+        known_ids = {entity.id: entity.id for entity in entities}
+        known_ids.update({relation.id: relation.id for relation in relations})
 
-                # Remove relations that depend on an invalid resolved relation,
-                # so the graph never receives dangling references.
-                while True:
-                    invalid_relation_ids = {raw_relation_ids[local] for local in invalid_local_ids}
-                    dependent = {
-                        local for local, relation in result.items()
-                        if any(argument.entity_id in invalid_relation_ids for argument in relation.arguments)
-                    }
-                    if not dependent:
-                        break
-                    invalid_local_ids.update(dependent)
-                    for local in dependent:
-                        result.pop(local, None)
+        def validate(response: Mapping[str, Any]) -> tuple[list[RelationInstance], str | None]:
+            raw_relations = response.get("relations")
+            if not isinstance(raw_relations, list):
+                raise StageOutputError("resolve", "'relations' must be a list", document_id=document_id, chunk_id=chunk.chunk_id)
+            local_relation_ids: dict[str, str] = {}
+            for index, raw in enumerate(raw_relations):
+                item = _as_mapping(raw, "resolve", document_id, chunk.chunk_id)
+                local = _text(item.get("id", f"resolved-{index}"), "id", "resolve", document_id, chunk.chunk_id)
+                if local in local_relation_ids:
+                    raise StageOutputError("resolve", f"duplicate relation id '{local}'", document_id=document_id, chunk_id=chunk.chunk_id)
+                local_relation_ids[local] = f"{document_id}:resolved:{index}"
+            reference_ids = {**known_ids, **local_relation_ids}
+            return self._parse_relation_candidates(
+                raw_relations, local_relation_ids, reference_ids, "resolve", chunk, text
+            )
 
-                if invalid_references and attempt < self.max_retries:
-                    validation_feedback = (
-                        "Your previous response referenced unknown ID(s): "
-                        f"{sorted(invalid_references)!r}. Correct the response. Every argument "
-                        "entity_id must exactly match an ID in the existing graph, or the id "
-                        "of another relation in your response. Do not invent, alter, concatenate, "
-                        "or partially copy IDs; omit any relation you cannot reference."
-                    )
-                    continue
-                if invalid_references and self.verbose:
-                    dropped_ids = sorted(invalid_local_ids)
-                    print(
-                        f"[{document_id}] resolve: dropped {len(dropped_ids)} relation(s) "
-                        "with invalid or dependent references after retries: "
-                        f"{dropped_ids}"
-                    )
-                return list(result.values())
-            except StageOutputError as exc:
-                if attempt == self.max_retries:
-                    if self.verbose:
-                        print(f"[{document_id}] resolve: skipped optional resolution after invalid output: {exc}")
-                    return []
-                validation_feedback = (
-                    f"Your previous response was invalid: {exc}. Correct the response. "
-                    "Every argument entity_id must exactly match an ID in the existing graph, "
-                    "or the id of another relation in your response. Do not invent, alter, "
-                    "concatenate, or partially copy IDs; omit any relation you cannot reference."
-                )
-        raise AssertionError("unreachable")
+        return self._generate_validated(
+            "resolve",
+            {"text": json.dumps(context, ensure_ascii=False), "ontology": self.ontology.as_prompt()},
+            chunk,
+            validate,
+            [],
+        )
 
     def process(self, document_id: str, text: str) -> nx.MultiDiGraph:
         total = time.perf_counter()

@@ -48,7 +48,9 @@ stages:
       id in this response. Use the exact local id from that entity or relation
       item. Assertion ids identify claims in the input and are not entity or
       relation ids; never use an assertion id as an argument entity_id.
-      Relations may reference other relations.
+      Relations may reference other relations. If validation feedback follows
+      the assertions, correct the cited IDs; omit a relation if its target is
+      not defined in this response.
       Do not infer relations unsupported by the source assertions.
 
       Ontology:
@@ -69,7 +71,7 @@ stages:
       atomic entities and already extracted relation entities. Every argument
       must exactly match one of those IDs, or the id of another relation in
       your response. Do not invent or modify IDs. If validation feedback is
-      included in the graph context, correct the cited error. Return no
+      included after the graph context, correct the cited error. Return no
       relation when the text does not support it or its arguments cannot be
       referenced.
 
