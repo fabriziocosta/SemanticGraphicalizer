@@ -255,9 +255,10 @@ def run_experiment(
     """Load/cache Aesop graphs and vectors, cluster them, and save a manifest."""
 
     root = Path(root)
-    cache_dir = root / "data" / "processed" / "aesop_abstractgraph"
+    text_root = root / "domains" / "text"
+    cache_dir = text_root / "data" / "processed" / "aesop_abstractgraph"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    raw_dir = root / "data" / "raw"
+    raw_dir = text_root / "data" / "raw"
     stories = load_aesop_fables(
         limit=smoke_limit if smoke_test else None,
         cache_dir=raw_dir,
@@ -265,8 +266,8 @@ def run_experiment(
     metadata, source_hashes, corpus_hash = _corpus_metadata(stories)
 
     config_paths = {
-        "ontology": root / "configs" / "ontologies" / "aesop.yaml",
-        "prompts": root / "configs" / "prompts" / "aesop.yaml",
+        "ontology": text_root / "configs" / "ontologies" / "aesop.yaml",
+        "prompts": text_root / "configs" / "prompts" / "aesop.yaml",
     }
     config_hashes = {
         name: hashlib.sha256(path.read_bytes()).hexdigest()

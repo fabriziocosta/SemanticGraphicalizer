@@ -11,8 +11,8 @@ The transformer accepts complete documents and returns one `networkx.MultiDiGrap
 from semantic_graphicalizer import SemanticGraphicalizer
 
 graphicalizer = SemanticGraphicalizer(
-    ontology="configs/ontologies/aesop.yaml",
-    prompts="configs/prompts/aesop.yaml",
+    ontology="domains/text/configs/ontologies/aesop.yaml",
+    prompts="domains/text/configs/prompts/aesop.yaml",
 )
 graphs = graphicalizer.transform(["The fox met the crow."])
 ```
@@ -71,7 +71,7 @@ Install the package and development tools with Python 3.12:
 ~/.venvs/py312/bin/python -m pytest
 ```
 
-See `notebooks/aesop_tales.ipynb` for the Gutenberg download, fable parsing, graph construction, and visualization workflow.
+See `domains/text/notebooks/aesop_tales.ipynb` for the Gutenberg download, fable parsing, graph construction, and visualization workflow. Text-specific configs, notebooks, experiment code, and data live under `domains/text/`.
 
 The download and cache logic is reusable outside the notebook:
 
@@ -88,7 +88,8 @@ stories = load_aesop_fables(limit=2, select_at_random=True, rand_seed=7)
 This returns a `list[str]`, one complete story per item, from Project
 Gutenberg's *Three Hundred Aesop's Fables*. The edition contains 313 indexed
 story headings. The parsed stories are cached under
-`data/raw/aesop_300_fables.json`, and the source under `data/raw/pg21.txt`;
+`domains/text/data/raw/aesop_300_fables.json`, and the source under
+`domains/text/data/raw/pg21.txt`;
 after the first call, subsequent calls do not download anything.
 
 Graphs can be rendered inline in a notebook with either the interactive D3

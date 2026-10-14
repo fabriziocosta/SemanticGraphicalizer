@@ -19,7 +19,7 @@ from semantic_graphicalizer.types import Argument, Entity, RelationInstance
 
 
 def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
-    ontology = load_ontology("configs/ontologies/aesop.yaml")
+    ontology = load_ontology("domains/text/configs/ontologies/aesop.yaml")
     graph = materialize_graph(
         [
             Entity("event-a", "Action"),

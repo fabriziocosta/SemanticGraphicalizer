@@ -8,7 +8,7 @@ not yet been verified or recorded.
 
 ### Implemented
 
-- `notebooks/aesop_graph_embeddings_clustering.ipynb` supports full-corpus and
+- `domains/text/notebooks/aesop_graph_embeddings_clustering.ipynb` supports full-corpus and
   three-tale smoke modes, checkpoints graphs and direct-text vectors, and
   compares AbstractGraph vectors with a direct-text baseline.
 - AbstractGraph conversion is available through the low-level functions and
@@ -53,12 +53,12 @@ not included in either the node embedding inputs or the direct-text baseline.
 
 ## Deliverables
 
-- [x] `notebooks/aesop_graph_embeddings_clustering.ipynb` with full and
+- [x] `domains/text/notebooks/aesop_graph_embeddings_clustering.ipynb` with full and
   small-corpus modes and checkpointed graphs and embeddings.
 - [x] Optional SemanticGraphicalizer adapter for `abstractgraph.AbstractGraph`
   with on-demand node embedding.
 - [x] Focused offline tests using deterministic model and embedding clients.
-- [ ] Run outputs under `data/processed/`, excluded from version control.
+- [ ] Run outputs under `domains/text/data/processed/`, excluded from version control.
 
 ## Experiment design
 

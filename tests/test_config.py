@@ -10,8 +10,8 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_aesop_configuration_loads_recursive_vocabularies() -> None:
-    ontology = load_ontology(ROOT / "configs/ontologies/aesop.yaml")
-    prompts = load_prompts(ROOT / "configs/prompts/aesop.yaml")
+    ontology = load_ontology(ROOT / "domains/text/configs/ontologies/aesop.yaml")
+    prompts = load_prompts(ROOT / "domains/text/configs/prompts/aesop.yaml")
     assert ontology.name == "aesop-narrative"
     assert "Character" in ontology.term_ids
     assert "interacts_with" in ontology.relation_ids

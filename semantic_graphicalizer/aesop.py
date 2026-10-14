@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 
 AESOP_GUTENBERG_URL = "https://www.gutenberg.org/cache/epub/21/pg21.txt"
-DEFAULT_AESOP_CACHE_DIR = Path("data") / "raw"
+DEFAULT_AESOP_CACHE_DIR = Path("domains") / "text" / "data" / "raw"
 DEFAULT_AESOP_CACHE_FILE = "pg21.txt"
 DEFAULT_AESOP_STORIES_CACHE_FILE = "aesop_300_fables.json"
 _TITLE_PATTERN = re.compile(r"(?m)^\s{5,}([A-ZÆŒ][A-ZÆŒ'’& ,.-]{2,80})\s*$")
