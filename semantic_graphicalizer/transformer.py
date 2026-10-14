@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +16,10 @@ from sklearn.random_projection import GaussianRandomProjection
 
 from .config import OntologyConfig, PromptConfig, load_ontology, load_prompts
 from .abstract_graph import InterpretationMode, ParallelEdgePolicy, semantic_graph_to_abstract_graph
+from .embedding_utils import project_embedding_vectors
 from .model import (
-    DEFAULT_OPENAI_EMBEDDING_MODEL,
     EmbeddingClient,
     ModelClient,
-    OpenAIEmbeddingClient,
     OpenAIModelClient,
     as_embedding_client,
 )
@@ -32,6 +32,12 @@ from .pipeline import (
     SemanticPipeline,
 )
 from .visualization import display_graph
+from .text_embeddings import (
+    DEFAULT_EMBEDDINGGEMMA2_MODEL,
+    EMBEDDINGGEMMA2_DIMENSIONS,
+    SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS,
+    EmbeddingGemma2TextClient,
+)
 
 
 def _project_graph_embeddings(
@@ -117,7 +123,7 @@ def _validate_embedding_projection(
         raise ValueError("random_seed must be a non-negative integer")
 
 
-class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
+class SemanticTextGraphicalizer(BaseEstimator, TransformerMixin):
     """Compile complete documents into ontology-grounded NetworkX graphs."""
 
     def __init__(
@@ -127,7 +133,11 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         model: ModelClient | None = None,
         *,
         embedder: EmbeddingClient | Callable[[Sequence[str]], Sequence[Sequence[float]]] | None = None,
-        embedding_model: str = DEFAULT_OPENAI_EMBEDDING_MODEL,
+        embedding_model: str = DEFAULT_EMBEDDINGGEMMA2_MODEL,
+        embedding_dim: int | None = None,
+        embedding_source_dim: int | None = None,
+        embedding_projection_seed: int = 17,
+        embedding_prompt_name: str = "Document",
         max_chunk_chars: int = 4000,
         chunk_overlap: int = 0,
         max_retries: int = 2,
@@ -139,11 +149,57 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
     ) -> None:
         if document_id_fn is not None and not callable(document_id_fn):
             raise TypeError("document_id_fn must be callable")
+        if not isinstance(embedding_model, str) or not embedding_model.strip():
+            raise ValueError("embedding_model must be a non-empty string")
+        if embedding_dim is not None and (
+            isinstance(embedding_dim, bool)
+            or not isinstance(embedding_dim, int)
+            or embedding_dim < 1
+        ):
+            raise ValueError("embedding_dim must be None or a positive integer")
+        if embedding_source_dim is not None and (
+            isinstance(embedding_source_dim, bool)
+            or not isinstance(embedding_source_dim, int)
+            or embedding_source_dim < 1
+            or (embedder is None and embedding_source_dim not in SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS)
+        ):
+            allowed = (
+                f"one of {SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS}"
+                if embedder is None
+                else "a positive integer"
+            )
+            raise ValueError(f"embedding_source_dim must be None or {allowed}")
+        if embedding_source_dim is not None:
+            configured_source_dim = embedding_source_dim
+        elif embedding_dim in SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS:
+            configured_source_dim = embedding_dim
+        elif embedding_dim is not None and embedder is None:
+            configured_source_dim = EMBEDDINGGEMMA2_DIMENSIONS
+        else:
+            configured_source_dim = None
+        if (
+            embedding_dim is not None
+            and configured_source_dim is not None
+            and embedding_dim > configured_source_dim
+        ):
+            raise ValueError("embedding_dim cannot exceed embedding_source_dim")
+        if (
+            isinstance(embedding_projection_seed, bool)
+            or not isinstance(embedding_projection_seed, int)
+            or embedding_projection_seed < 0
+        ):
+            raise ValueError("embedding_projection_seed must be a non-negative integer")
+        if not isinstance(embedding_prompt_name, str) or not embedding_prompt_name.strip():
+            raise ValueError("embedding_prompt_name must be a non-empty string")
         self.ontology = ontology
         self.prompts = prompts
         self.model = model
         self.embedder = embedder
         self.embedding_model = embedding_model
+        self.embedding_dim = embedding_dim
+        self.embedding_source_dim = embedding_source_dim
+        self.embedding_projection_seed = embedding_projection_seed
+        self.embedding_prompt_name = embedding_prompt_name
         self.max_chunk_chars = max_chunk_chars
         self.chunk_overlap = chunk_overlap
         self.max_retries = max_retries
@@ -153,7 +209,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         self.entity_resolver = entity_resolver
         self.verbose = verbose
 
-    def fit(self, X: Iterable[str], y: Any = None) -> "SemanticGraphicalizer":
+    def fit(self, X: Iterable[str], y: Any = None) -> "SemanticTextGraphicalizer":
         # This transformer has no corpus-dependent learned state. ``fit`` is
         # retained for sklearn compatibility and prepares the configured
         # pipeline; document validation happens when documents are transformed.
@@ -179,7 +235,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         )
         if self.verbose:
             print(
-                f"[SemanticGraphicalizer] ready: model={type(model).__name__}, "
+                f"[SemanticTextGraphicalizer] ready: model={type(model).__name__}, "
                 f"ontology={self.ontology_.name}, domain={self.prompts_.domain}"
             )
 
@@ -201,7 +257,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
 
     def fit_transform(self, X: Iterable[str], y: Any = None, **fit_params: Any) -> list[nx.MultiDiGraph]:
         if fit_params:
-            raise TypeError("fit_params are not supported by SemanticGraphicalizer")
+            raise TypeError("fit_params are not supported by SemanticTextGraphicalizer")
         documents = self._validate_input(X)
         self.fit(documents, y)
         return self.transform(documents)
@@ -278,6 +334,8 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         embedding_attribute: str = "embedding",
         node_text_fn: Callable[[Any, Mapping[str, Any]], str] | None = None,
         batch_size: int = 128,
+        embedding_dim: int | None = None,
+        source_embedding_dim: int | None = None,
         skip_matching: bool = False,
     ) -> list[nx.Graph]:
         """Compute and attach one text embedding to every graph node.
@@ -285,6 +343,10 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         Inputs are mutated in place and returned as a list. Vectors are stored
         on each node under
         ``embedding_attribute``; the default is ``graph.nodes[node_id]["embedding"]``.
+        EmbeddingGemma 2 is the default local embedder. Its native dimensions
+        (128, 256, 512, 768) use Matryoshka truncation. Any smaller positive
+        target dimension can use a seeded Gaussian random projection from a
+        supported source dimension.
         """
 
         if not isinstance(embedding_attribute, str) or not embedding_attribute.strip():
@@ -293,9 +355,47 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raise ValueError("batch_size must be a positive integer")
         if not isinstance(skip_matching, bool):
             raise TypeError("skip_matching must be a bool")
+        provider = self.embedder
+        if embedding_dim is None:
+            embedding_dim = self.embedding_dim
+        if source_embedding_dim is None:
+            source_embedding_dim = self.embedding_source_dim
+        if embedding_dim is None and source_embedding_dim is not None:
+            embedding_dim = source_embedding_dim
+        if embedding_dim is None and provider is None:
+            embedding_dim = EMBEDDINGGEMMA2_DIMENSIONS
+        if embedding_dim is not None and (
+            isinstance(embedding_dim, bool)
+            or not isinstance(embedding_dim, int)
+            or embedding_dim < 1
+        ):
+            raise ValueError("embedding_dim must be None or a positive integer")
+        if source_embedding_dim is None and provider is None:
+            source_embedding_dim = (
+                embedding_dim
+                if embedding_dim in SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS
+                else EMBEDDINGGEMMA2_DIMENSIONS
+            )
+        if source_embedding_dim is not None and (
+            isinstance(source_embedding_dim, bool)
+            or not isinstance(source_embedding_dim, int)
+            or source_embedding_dim < 1
+            or (
+                provider is None
+                and source_embedding_dim not in SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS
+            )
+        ):
+            if provider is None:
+                raise ValueError(
+                    f"source_embedding_dim must be one of {SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS}"
+                )
+            raise ValueError("source_embedding_dim must be a positive integer")
+        if embedding_dim is not None and source_embedding_dim is not None and embedding_dim > source_embedding_dim:
+            raise ValueError("embedding_dim cannot exceed source_embedding_dim")
+        if embedding_dim is None and source_embedding_dim is not None:
+            embedding_dim = source_embedding_dim
         targets = self._embedding_targets(values)
         text_builder = node_text_fn or self._default_node_embedding_text
-        provider = self.embedder
         model_id = (
             self.embedding_model
             if provider is None
@@ -304,8 +404,13 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         provider_function = getattr(provider, "function", None) if provider is not None else None
         provider_request_options = getattr(provider, "request_options", {}) if provider is not None else {}
         provider_settings = {
-            "provider": f"{type(provider).__module__}.{type(provider).__qualname__}" if provider is not None else "openai",
+            "provider": f"{type(provider).__module__}.{type(provider).__qualname__}" if provider is not None else "sentence-transformers",
             "model": str(model_id),
+            "prompt_name": (
+                getattr(provider, "prompt_name", None)
+                if provider is not None
+                else self.embedding_prompt_name
+            ),
             "request_options": dict(provider_request_options) if isinstance(provider_request_options, Mapping) else {},
             "cache_key": getattr(provider, "cache_key", None) if provider is not None else None,
         }
@@ -323,6 +428,20 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                     "provider": provider_settings,
                     "text_builder": builder_id,
                     "embedding_attribute": embedding_attribute,
+                    "dimension": embedding_dim if embedding_dim is not None else "provider-native",
+                    "source_dimension": source_embedding_dim if source_embedding_dim is not None else "provider-native",
+                    "projection_method": (
+                        "GaussianRandomProjection"
+                        if embedding_dim is not None
+                        and (source_embedding_dim is None or embedding_dim != source_embedding_dim)
+                        else None
+                    ),
+                    "projection_random_seed": (
+                        self.embedding_projection_seed
+                        if embedding_dim is not None
+                        and (source_embedding_dim is None or embedding_dim != source_embedding_dim)
+                        else None
+                    ),
                 },
                 sort_keys=True,
                 default=str,
@@ -359,18 +478,39 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
             raw_client = (
                 self.embedder
                 if self.embedder is not None
-                else OpenAIEmbeddingClient(model=self.embedding_model)
+                else EmbeddingGemma2TextClient(
+                    model_id=self.embedding_model,
+                    embedding_dim=source_embedding_dim,
+                    prompt_name=self.embedding_prompt_name,
+                    batch_size=batch_size,
+                )
             )
             client = as_embedding_client(raw_client)
             self.embedding_client_ = client
 
         pending: list[tuple[nx.Graph, Any, list[float], str]] = []
+        resolved_source_dim = source_embedding_dim
+        resolved_output_dim = embedding_dim
         for start in range(0, len(records), batch_size):
             batch = records[start:start + batch_size]
-            vectors = list(client.embed([text for _graph, _node_id, text in batch]))
+            texts = [text for _graph, _node_id, text in batch]
+            if isinstance(client, EmbeddingGemma2TextClient):
+                vectors = list(
+                    client.embed(
+                        texts,
+                        batch_size=batch_size,
+                        embedding_dim=source_embedding_dim,
+                    )
+                )
+            else:
+                vectors = list(client.embed(texts))
             if len(vectors) != len(batch):
                 raise ValueError("embedder returned a different number of vectors than node texts")
+            batch_records: list[tuple[nx.Graph, Any, list[float], str]] = []
+            batch_source_dim: int | None = None
             for (graph, node_id, text), vector in zip(batch, vectors):
+                if hasattr(vector, "tolist"):
+                    vector = vector.tolist()
                 if isinstance(vector, (str, bytes)) or not isinstance(vector, Sequence):
                     raise ValueError(f"embedder returned an invalid vector for node '{node_id}'")
                 try:
@@ -379,7 +519,42 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                     raise ValueError(f"embedder returned an invalid vector for node '{node_id}'") from exc
                 if not values_as_float:
                     raise ValueError(f"embedder returned an empty vector for node '{node_id}'")
-                pending.append((graph, node_id, values_as_float, text))
+                if not all(math.isfinite(value) for value in values_as_float):
+                    raise ValueError(
+                        f"embedder returned non-finite values for node '{node_id}'"
+                    )
+                vector_dim = len(values_as_float)
+                if source_embedding_dim is not None and vector_dim != source_embedding_dim:
+                    raise ValueError(
+                        f"embedder vectors must contain {source_embedding_dim} values; "
+                        f"node '{node_id}' returned {vector_dim}"
+                    )
+                if batch_source_dim is None:
+                    batch_source_dim = vector_dim
+                elif vector_dim != batch_source_dim:
+                    raise ValueError("embedder returned vectors with inconsistent dimensions")
+                batch_records.append((graph, node_id, values_as_float, text))
+            if batch_source_dim is None:
+                continue
+            if resolved_source_dim is None:
+                resolved_source_dim = batch_source_dim
+            elif batch_source_dim != resolved_source_dim:
+                raise ValueError("embedder returned vectors with inconsistent dimensions across batches")
+            if resolved_output_dim is None:
+                resolved_output_dim = resolved_source_dim
+            if resolved_output_dim > resolved_source_dim:
+                raise ValueError("embedding_dim cannot exceed the embedder's output dimension")
+            batch_vectors = [record[2] for record in batch_records]
+            if resolved_output_dim != resolved_source_dim:
+                batch_vectors = project_embedding_vectors(
+                    batch_vectors,
+                    output_dim=resolved_output_dim,
+                    random_seed=self.embedding_projection_seed,
+                )
+            pending.extend(
+                (graph, node_id, vector, text)
+                for (graph, node_id, _source_vector, text), vector in zip(batch_records, batch_vectors)
+            )
         for graph, node_id, vector, text in pending:
             graph.nodes[node_id][embedding_attribute] = vector
             graph.nodes[node_id]["embedding_metadata"] = {
@@ -387,6 +562,17 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
                 "config_hash": config_digest,
                 "text_sha256": sha256(text.encode("utf-8")).hexdigest(),
                 "dimension": len(vector),
+                "source_dimension": resolved_source_dim,
+                "projection_method": (
+                    "GaussianRandomProjection"
+                    if resolved_output_dim != resolved_source_dim
+                    else None
+                ),
+                "projection_random_seed": (
+                    self.embedding_projection_seed
+                    if resolved_output_dim != resolved_source_dim
+                    else None
+                ),
             }
         return targets
 
@@ -591,3 +777,6 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         """Return a dynamic D3, static SVG, or indented text visualization."""
 
         return display_graph(graph, mode=mode, **kwargs)
+
+# Backwards-compatible alias; use SemanticTextGraphicalizer in new code.
+SemanticGraphicalizer = SemanticTextGraphicalizer

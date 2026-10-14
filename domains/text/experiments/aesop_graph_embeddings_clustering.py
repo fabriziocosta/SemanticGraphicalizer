@@ -24,7 +24,7 @@ from semantic_graphicalizer import (
     DEFAULT_OPENAI_EMBEDDING_MODEL,
     DEFAULT_OPENAI_MODEL,
     OpenAIEmbeddingClient,
-    SemanticGraphicalizer,
+    SemanticTextGraphicalizer,
     load_aesop_fables,
     vectorize_abstract_graphs,
 )
@@ -75,7 +75,7 @@ def _corpus_metadata(stories: Sequence[str]) -> tuple[list[dict[str, Any]], list
 def _load_or_build_graphs(
     stories: Sequence[str],
     metadata: Sequence[dict[str, Any]],
-    graphicalizer: SemanticGraphicalizer,
+    graphicalizer: SemanticTextGraphicalizer,
     cache_dir: Path,
     graph_config_hash: str,
 ) -> list[Any]:
@@ -278,9 +278,10 @@ def run_experiment(
         "config_sha256": config_hashes,
     }, sort_keys=True).encode("utf-8")).hexdigest()
 
-    graphicalizer = SemanticGraphicalizer(
+    graphicalizer = SemanticTextGraphicalizer(
         ontology=config_paths["ontology"],
         prompts=config_paths["prompts"],
+        embedder=OpenAIEmbeddingClient(model=embedding_model),
         embedding_model=embedding_model,
     )
     graphs = _load_or_build_graphs(

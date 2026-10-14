@@ -23,7 +23,10 @@ stages:
       when no narrower type fits. Keep properties as concise name/value pairs such as color,
       material, pose, or action. Focus on the candidate entity and its integral components;
       do not repeat unrelated objects that are only partly visible as crop context. Do not
-      repeat scene context as an entity.
+      repeat scene context as an entity. Avoid representing the same visual object twice as
+      both a broad group and a more specific member; when those descriptions refer to the
+      same visible object, return only its most specific description. Use separate entities
+      only for visibly distinct objects.
     output: >-
       Return entities with a local id, ontology type, mention, optional key, a tight normalized
       bbox relative to this crop [x_min, y_min, x_max, y_max] (or null if it cannot be localized),

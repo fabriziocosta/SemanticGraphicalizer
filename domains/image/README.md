@@ -16,9 +16,9 @@ OpenAI model. Pass a request client via `model` implementing
 
 ```python
 from pathlib import Path
-from semantic_graphicalizer import ImageGraphicalizer
+from semantic_graphicalizer import SemanticImageGraphicalizer
 
-graphicalizer = ImageGraphicalizer(vlm_model="gpt-5.6-terra", verbose=True)
+graphicalizer = SemanticImageGraphicalizer(vlm_model="gpt-5.6-terra", verbose=True)
 graphs = graphicalizer.transform(Path("domains/image/data/raw/scene.jpg"))
 graph = graphs[0]
 ```
@@ -29,7 +29,7 @@ The repository includes an office sample image at
 
 The default visual ontology and image-specific prompts live under
 `configs/ontologies/` and `configs/prompts/`; pass custom YAML paths or mappings
-to `ImageGraphicalizer` to adapt them. The built-in ontology includes `scene`,
+to `SemanticImageGraphicalizer` to adapt them. The built-in ontology includes `scene`,
 a `visual_entity` fallback, and specific types such as `person`, `animal`,
 `plant`, `vehicle`, `tool`, `building`, `road`, `furniture`, `object`, and
 `landscape_feature`. Office types include `chair`, `desk`, `table`, `monitor`,
@@ -52,7 +52,7 @@ are mapped to the source image and used to merge same-type, semantically matchin
 detections whose boxes overlap across crops. The merged node retains provenance
 from each crop, and `graph.graph["duplicate_entities_merged"]` records how many
 detections were merged. Use `display_image_graph(graph)` or
-`ImageGraphicalizer.display_on_image(graph)` to overlay detected boxes, graph
+`SemanticImageGraphicalizer.display_on_image(graph)` to overlay detected boxes, graph
 nodes, relation nodes, and argument links on the source image. Whole-scene nodes
 and their relations are hidden by default to reduce clutter; pass
 `show_scene_nodes=True` to include them. The standard `display_graph` renderer
@@ -67,7 +67,7 @@ Install the local EmbeddingGemma 2 runtime with
 `pip install -e '.[image-embeddings]'`. The model and its weights load only
 when the embedding method is called. After creating graphs, explicitly embed
 their saved region crops. Choose the embedder and output dimensions when
-constructing `ImageGraphicalizer`; the defaults are EmbeddingGemma 2 and 768
+constructing `SemanticImageGraphicalizer`; the defaults are EmbeddingGemma 2 and 768
 dimensions. Set `image_embedding_model` to choose a Sentence Transformers model,
 or pass a custom client as `image_embedder`. Native output dimensions
 (`128`, `256`, `512`, `768`) use the model's Matryoshka truncation. Any smaller
@@ -75,7 +75,7 @@ positive target can instead be created with a reproducible Gaussian random
 projection from `image_embedding_source_dim`:
 
 ```python
-graphicalizer = ImageGraphicalizer(
+graphicalizer = SemanticImageGraphicalizer(
     image_embedding_model="google/embeddinggemma-2",
     image_embedding_dim=10,
     image_embedding_source_dim=128,

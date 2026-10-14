@@ -12,7 +12,7 @@ not yet been verified or recorded.
   three-tale smoke modes, checkpoints graphs and direct-text vectors, and
   compares AbstractGraph vectors with a direct-text baseline.
 - AbstractGraph conversion is available through the low-level functions and
-  `SemanticGraphicalizer.to_abstract_graph`, `to_abstract_graphs`, and
+  `SemanticTextGraphicalizer.to_abstract_graph`, `to_abstract_graphs`, and
   `transform_abstract` methods. Embeddings are optional and source vectors
   stored under `embedding` are mapped to AbstractGraph's base-node `attribute`.
 - The notebook passes pre-built AbstractGraphs directly to
@@ -55,7 +55,7 @@ not included in either the node embedding inputs or the direct-text baseline.
 
 - [x] `domains/text/notebooks/aesop_graph_embeddings_clustering.ipynb` with full and
   small-corpus modes and checkpointed graphs and embeddings.
-- [x] Optional SemanticGraphicalizer adapter for `abstractgraph.AbstractGraph`
+- [x] Optional SemanticTextGraphicalizer adapter for `abstractgraph.AbstractGraph`
   with on-demand node embedding.
 - [x] Focused offline tests using deterministic model and embedding clients.
 - [ ] Run outputs under `domains/text/data/processed/`, excluded from version control.
@@ -76,7 +76,7 @@ not included in either the node embedding inputs or the direct-text baseline.
 ### AbstractGraph conversion and node embeddings
 
 - Provide `semantic_graph_to_abstract_graph(...)` and the
-  `SemanticGraphicalizer.to_abstract_graph` and `transform_abstract`
+  `SemanticTextGraphicalizer.to_abstract_graph` and `transform_abstract`
   convenience methods.
 - Conversion uses entity `relation` as the base-node label, argument `role` as
   the base-edge label, and provenance plus `Entity.type` to create local
@@ -92,7 +92,7 @@ not included in either the node embedding inputs or the direct-text baseline.
   simple graph. Combine parallel argument roles deterministically by default;
   offer an error policy for callers that disallow them.
 - Install AbstractGraph through the optional `abstractgraph` extra. Ordinary
-  SemanticGraphicalizer imports and graph processing must work without it.
+  SemanticTextGraphicalizer imports and graph processing must work without it.
 
 ### Graph and text representations
 

@@ -31,7 +31,12 @@ from .model import (
     OpenAIModelClient,
     RequestModelClient,
 )
-from .image import ImageGraphicalizer, ImagePromptConfig, load_image_prompts
+from .image import (
+    ImageGraphicalizer,
+    ImagePromptConfig,
+    SemanticImageGraphicalizer,
+    load_image_prompts,
+)
 from .image_embeddings import (
     DEFAULT_IMAGE_EMBEDDING_MODEL,
     IMAGE_EMBEDDING_DIMENSIONS,
@@ -40,13 +45,19 @@ from .image_embeddings import (
     EmbeddingGemma2ImageClient,
     ImageEmbeddingClient,
 )
+from .text_embeddings import (
+    DEFAULT_EMBEDDINGGEMMA2_MODEL,
+    EMBEDDINGGEMMA2_DIMENSIONS,
+    SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS,
+    EmbeddingGemma2TextClient,
+)
 from .pipeline import (
     ConservativeEntityResolver,
     InputPartitioner,
     ParagraphWindowSegmenter,
     SemanticPipeline,
 )
-from .transformer import SemanticGraphicalizer
+from .transformer import SemanticGraphicalizer, SemanticTextGraphicalizer
 from .abstract_graph import (
     InterpretationMode,
     ParallelEdgePolicy,
@@ -121,7 +132,13 @@ __all__ = [
     "ParallelEdgePolicy",
     "SemanticGraphicalizer",
     "ImageGraphicalizer",
+    "SemanticTextGraphicalizer",
+    "SemanticImageGraphicalizer",
     "ImageEmbeddingClient",
+    "EmbeddingGemma2TextClient",
+    "DEFAULT_EMBEDDINGGEMMA2_MODEL",
+    "EMBEDDINGGEMMA2_DIMENSIONS",
+    "SUPPORTED_EMBEDDINGGEMMA2_DIMENSIONS",
     "CallableImageEmbeddingClient",
     "EmbeddingGemma2ImageClient",
     "DEFAULT_IMAGE_EMBEDDING_MODEL",

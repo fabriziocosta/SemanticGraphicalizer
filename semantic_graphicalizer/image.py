@@ -16,6 +16,7 @@ import networkx as nx
 import yaml
 
 from .config import OntologyConfig, PromptStage, load_ontology
+from .embedding_utils import project_embedding_vectors
 from .graph import GraphValidationError, materialize_graph
 from .image_embeddings import (
     DEFAULT_IMAGE_EMBEDDING_MODEL,
@@ -24,7 +25,6 @@ from .image_embeddings import (
     EmbeddingGemma2ImageClient,
     ImageEmbeddingClient,
     as_image_embedding_client,
-    random_project_embeddings,
 )
 from .model import (
     DEFAULT_OPENAI_IMAGE_MODEL,
@@ -247,14 +247,26 @@ def _bbox_overlap(first: list[float], second: list[float]) -> tuple[float, float
 def _mention_similarity(first: Any, second: Any) -> float:
     """Measure token overlap while tolerating extra visual adjectives."""
 
-    first_tokens = set(re.findall(r"[a-z0-9]+", str(first).casefold()))
-    second_tokens = set(re.findall(r"[a-z0-9]+", str(second).casefold()))
+    def tokens(value: Any) -> set[str]:
+        result = set()
+        for token in re.findall(r"[a-z0-9]+", str(value).casefold()):
+            # Singularize ordinary plurals so "garden shrubs" and
+            # "flowering garden shrub" compare as the same visual mention.
+            if len(token) > 4 and token.endswith("ies"):
+                token = token[:-3] + "y"
+            elif len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+                token = token[:-1]
+            result.add(token)
+        return result
+
+    first_tokens = tokens(first)
+    second_tokens = tokens(second)
     if not first_tokens or not second_tokens:
         return 0.0
     return len(first_tokens & second_tokens) / min(len(first_tokens), len(second_tokens))
 
 
-class ImageGraphicalizer:
+class SemanticImageGraphicalizer:
     """Extract ontology-grounded graphs from local scene images."""
 
     def __init__(
@@ -332,7 +344,7 @@ class ImageGraphicalizer:
         try:
             from PIL import Image
         except ImportError as exc:  # pragma: no cover - depends on optional install
-            raise ImportError("ImageGraphicalizer requires Pillow; install semantic-graphicalizer[image]") from exc
+            raise ImportError("SemanticImageGraphicalizer requires Pillow; install semantic-graphicalizer[image]") from exc
         return Image
 
     def _run_request(self, request: ModelRequest) -> Mapping[str, Any]:
@@ -555,11 +567,7 @@ class ImageGraphicalizer:
                     continue
                 first_precise = first_locator.get("entity_bbox") is not None
                 second_precise = second_locator.get("entity_bbox") is not None
-                if (
-                    first_record.get("part_id") == second_record.get("part_id")
-                    and not (first_precise and second_precise)
-                ):
-                    continue
+                same_part = first_record.get("part_id") == second_record.get("part_id")
                 second_box = second_locator.get("entity_bbox", second_locator.get("normalized_bbox"))
                 if not (
                     isinstance(first_box, (list, tuple)) and len(first_box) == 4
@@ -600,6 +608,14 @@ class ImageGraphicalizer:
                     or similarity >= 0.5
                     or strong_spatial_match
                 )
+                # Multiple entities can be returned for one broad crop. If
+                # precise boxes are missing, merge only near-identical names
+                # from that same crop; this avoids treating "garden shrubs"
+                # and "flowering garden shrub" as two nodes while preserving
+                # distinct entities such as a tree and a shrub.
+                if same_part and not (first_precise and second_precise):
+                    if not (first_key and first_key == second_key) and similarity < 0.8:
+                        continue
                 if same_identity_hint and same_location:
                     return True
         return False
@@ -637,6 +653,12 @@ class ImageGraphicalizer:
                 ) if value
             ]
             attributes["descriptions"] = list(dict.fromkeys(descriptions))
+            if descriptions:
+                # Prefer the more informative merged label for graph display.
+                attributes["description"] = max(
+                    descriptions,
+                    key=lambda value: len(set(re.findall(r"[a-z0-9]+", str(value).casefold()))),
+                )
             properties = dict(attributes.get("properties", {}))
             for name, value in entity.attributes.get("properties", {}).items():
                 properties.setdefault(name, value)
@@ -777,7 +799,7 @@ class ImageGraphicalizer:
         )
         if self.verbose:
             print(
-                f"[ImageGraphicalizer] {path.name}: {len(parts)} regions, "
+                f"[SemanticImageGraphicalizer] {path.name}: {len(parts)} regions, "
                 f"merged {duplicate_entity_count} duplicate detections, "
                 f"{graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
             )
@@ -976,7 +998,7 @@ class ImageGraphicalizer:
                 validated.append([value / norm for value in vector])
 
             if embedding_dim != source_embedding_dim:
-                validated = random_project_embeddings(
+                validated = project_embedding_vectors(
                     validated,
                     output_dim=embedding_dim,
                     random_seed=self.image_embedding_projection_seed,
@@ -998,7 +1020,7 @@ class ImageGraphicalizer:
 
         return display_image_graph(graph, image=image, **kwargs)
 
-    def fit(self, X: Any = None, y: Any = None) -> "ImageGraphicalizer":
+    def fit(self, X: Any = None, y: Any = None) -> "SemanticImageGraphicalizer":
         """Keep scikit-learn transformer compatibility; there is no fitted state."""
 
         del X, y
@@ -1008,3 +1030,6 @@ class ImageGraphicalizer:
         del y
         self.fit()
         return self.transform(X)
+
+# Backwards-compatible alias; use SemanticImageGraphicalizer in new code.
+ImageGraphicalizer = SemanticImageGraphicalizer

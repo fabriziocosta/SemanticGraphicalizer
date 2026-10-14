@@ -18,7 +18,7 @@ The principal research hypothesis is that graph construction can become more rel
 
 The framework described here has a working reference implementation in this
 repository (status checked 2026-09-23). The implementation is provider-neutral
-and exposes a scikit-learn-compatible `SemanticGraphicalizer`. Given an
+and exposes a scikit-learn-compatible `SemanticTextGraphicalizer`. Given an
 ontology configuration, a prompt configuration, and complete document strings,
 it returns one validated NetworkX `MultiDiGraph` per document. When no model
 client is supplied, it uses OpenAI structured JSON output with

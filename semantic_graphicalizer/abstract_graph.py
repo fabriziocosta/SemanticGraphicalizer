@@ -169,7 +169,7 @@ def semantic_graph_to_abstract_graph(
 
     Existing node embeddings are mapped to base-node real-valued attributes.
     This low-level converter never requests embeddings; use
-    ``SemanticGraphicalizer.to_abstract_graph(..., embed_nodes=True)`` to
+    ``SemanticTextGraphicalizer.to_abstract_graph(..., embed_nodes=True)`` to
     compute missing or stale vectors as part of conversion.
     """
 

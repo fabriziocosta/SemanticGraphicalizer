@@ -25,6 +25,9 @@ dev = [
 image = [
     "Pillow>=10.0",
 ]
+text-embeddings = [
+    "sentence-transformers>=6.1.0",
+]
 image-embeddings = [
     "Pillow>=10.0",
     "sentence-transformers[image]>=6.1.0",

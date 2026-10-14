@@ -9,9 +9,9 @@ scratchpad are collected in the [docs folder](docs/README.md).
 The transformer accepts complete documents and returns one `networkx.MultiDiGraph` per document. Call `transform` directly; the configured pipeline is initialized on its first use. Model execution is intentionally provider-neutral: pass an object with `generate(...)` or a compatible callable.
 
 ```python
-from semantic_graphicalizer import SemanticGraphicalizer
+from semantic_graphicalizer import SemanticTextGraphicalizer
 
-graphicalizer = SemanticGraphicalizer(
+graphicalizer = SemanticTextGraphicalizer(
     ontology="domains/text/configs/ontologies/aesop.yaml",
     prompts="domains/text/configs/prompts/aesop.yaml",
 )
@@ -24,7 +24,7 @@ graphs = graphicalizer.transform(["The fox met the crow."])
 adapters. Parts carry a modality, content or a media reference, a source
 locator, and metadata. The paragraph segmenter exposes
 `partition(DocumentInput)` and still supports its original `segment(...)`
-method. `SemanticGraphicalizer` remains the text workflow. `ImageGraphicalizer`
+method. `SemanticTextGraphicalizer` remains the text workflow. `SemanticImageGraphicalizer`
 accepts local image paths, identifies foreground regions, persists crops,
 analyzes them against an image ontology, and extracts document-level relations.
 See the [image domain guide](domains/image/README.md) and its
@@ -44,7 +44,7 @@ export OPENAI_API_KEY="your_api_key_here"
 ```
 
 Pass `model=...` to inject a fake client for tests or another provider.
-`ImageGraphicalizer` defaults to `gpt-5.6-terra` while preserving the text
+`SemanticImageGraphicalizer` defaults to `gpt-5.6-terra` while preserving the text
 default above. Install Pillow for image loading and crop persistence with
 `pip install -e '.[image]'`.
 
@@ -111,21 +111,35 @@ graphicalizer.display(graphs[0], mode="static")
 graphicalizer.display(graphs[0], mode="text")
 ```
 
-The default OpenAI text embedder can vectorize the available text for every
-node in graphs. Vectors are attached in place under the `embedding`
-node attribute; pass `embedder=...` to inject another provider or
+The default local text embedder is EmbeddingGemma 2. It can vectorize the
+available text for every node in graphs. Install it with
+`pip install -e '.[text-embeddings]'`. Vectors are attached in place under the
+`embedding` node attribute; pass `embedder=...` to inject another provider or
 `node_text_fn=...` to control the text sent for each node:
 
 ```python
+graphicalizer = SemanticTextGraphicalizer(
+    ontology="domains/text/configs/ontologies/aesop.yaml",
+    prompts="domains/text/configs/prompts/aesop.yaml",
+    embedding_dim=10,
+    embedding_source_dim=128,
+)
 graphs = graphicalizer.transform(["The fox met the crow."])
 embedded_graphs = graphicalizer.compute_embeddings(graphs)
 vector = embedded_graphs[0].nodes["some-node"]["embedding"]
 ```
 
-The default embedding model is `text-embedding-3-small` and uses the
-OpenAI embeddings endpoint. Set `OPENAI_API_KEY` before requesting embeddings.
+Native EmbeddingGemma dimensions (`128`, `256`, `512`, `768`) use its
+Matryoshka truncation. Other positive output dimensions use a seeded Gaussian
+random projection from a supported source dimension; the seed defaults to
+`17`. Text embeddings use the model's `Document` task prompt by default; set
+`embedding_prompt_name` for another text task. Use the same model, source
+dimension, and projection seed for text and image vectors when comparing them
+in the shared multimodal space. The model and its weights load only when
+embeddings are requested. To use OpenAI embeddings, inject
+`OpenAIEmbeddingClient(model="text-embedding-3-small")`.
 For image crops, install `.[image-embeddings]` and call
-`ImageGraphicalizer.compute_part_embeddings(graphs)` to attach local
+`SemanticImageGraphicalizer.compute_part_embeddings(graphs)` to attach local
 EmbeddingGemma 2 vectors to the saved image-part records.
 
 For a compact dynamic layout, reduce the link distance and component spacing;
@@ -160,7 +174,7 @@ stage timings and counts remain available under `graph.graph["stats"]`.
 
 Long paragraphs are split at word boundaries, and transient model-provider
 failures are retried with exponential backoff. Configure `max_retries` and
-`retry_backoff` on `SemanticGraphicalizer` when a provider needs different
+`retry_backoff` on `SemanticTextGraphicalizer` when a provider needs different
 limits; set `max_retries=0` to disable retries.
 
 The `extract` and `resolve` stages validate relation argument IDs through the
