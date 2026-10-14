@@ -129,9 +129,9 @@ def test_image_part_embeddings_are_attached_cached_and_serializable(tmp_path: Pa
         def __init__(self):
             self.calls = []
 
-        def embed_images(self, image_paths, *, batch_size=32):
+        def embed_images(self, image_paths, *, batch_size=32, embedding_dim=IMAGE_EMBEDDING_DIMENSIONS):
             self.calls.append((list(image_paths), batch_size))
-            return [[float(index + 1)] * IMAGE_EMBEDDING_DIMENSIONS for index, _ in enumerate(image_paths)]
+            return [[float(index + 1)] * embedding_dim for index, _ in enumerate(image_paths)]
 
     embedder = FakeImageEmbedder()
     graphicalizer = ImageGraphicalizer(
@@ -158,9 +158,15 @@ def test_image_part_embeddings_are_attached_cached_and_serializable(tmp_path: Pa
 
     graphicalizer.compute_part_embeddings(graphs)
     assert len(embedder.calls) == 2
+    graphicalizer.compute_part_embeddings(graphs, embedding_dim=128, batch_size=1)
+    assert len(embedder.calls) == 4
+    assert len(part["embedding"]) == 128
+    assert part["embedding_metadata"]["dimension"] == 128
+    graphicalizer.compute_part_embeddings(graphs, embedding_dim=128, batch_size=1)
+    assert len(embedder.calls) == 4
     Path(part["content"]).write_bytes(Path(part["content"]).read_bytes() + b"changed")
-    graphicalizer.compute_part_embeddings(graphs)
-    assert len(embedder.calls) == 3
+    graphicalizer.compute_part_embeddings(graphs, embedding_dim=128, batch_size=1)
+    assert len(embedder.calls) == 5
 
 
 def test_empty_image_graph_does_not_load_embedding_model(tmp_path: Path) -> None:
@@ -193,7 +199,8 @@ def test_image_part_embedding_rejects_invalid_client_output(tmp_path: Path, resu
     class BadImageEmbedder:
         model_id = "fake/bad-image-embedder"
 
-        def embed_images(self, image_paths, *, batch_size=32):
+        def embed_images(self, image_paths, *, batch_size=32, embedding_dim=IMAGE_EMBEDDING_DIMENSIONS):
+            del image_paths, batch_size, embedding_dim
             return result
 
     graphicalizer = ImageGraphicalizer(
@@ -212,13 +219,14 @@ def test_embedding_gemma_client_uses_normalized_local_image_embeddings() -> None
         def encode(self, paths, **kwargs):
             assert paths == ["crop-a.png", "crop-b.png"]
             assert kwargs["batch_size"] == 2
+            assert kwargs["truncate_dim"] == 128
             assert kwargs["normalize_embeddings"] is True
             assert kwargs["show_progress_bar"] is False
-            return [[0.25, 0.75], [0.5, 0.5]]
+            return [[0.25] * 128, [0.5] * 128]
 
     client = EmbeddingGemma2ImageClient(model=FakeSentenceTransformer())
-    assert client.embed_images(["crop-a.png", "crop-b.png"], batch_size=2) == [
-        [0.25, 0.75], [0.5, 0.5]
+    assert client.embed_images(["crop-a.png", "crop-b.png"], batch_size=2, embedding_dim=128) == [
+        [0.25] * 128, [0.5] * 128
     ]
 
 

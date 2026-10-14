@@ -20,6 +20,7 @@ from .graph import GraphValidationError, materialize_graph
 from .image_embeddings import (
     DEFAULT_IMAGE_EMBEDDING_MODEL,
     IMAGE_EMBEDDING_DIMENSIONS,
+    SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS,
     EmbeddingGemma2ImageClient,
     ImageEmbeddingClient,
     as_image_embedding_client,
@@ -262,7 +263,7 @@ class ImageGraphicalizer:
         model: Any = None,
         *,
         crop_dir: str | Path = Path("domains/image/data/processed/regions"),
-        image_embedder: ImageEmbeddingClient | Callable[[Sequence[str | Path]], Sequence[Sequence[float]]] | None = None,
+        image_embedder: ImageEmbeddingClient | Callable[[Sequence[str | Path], int], Sequence[Sequence[float]]] | None = None,
         image_embedding_model: str = DEFAULT_IMAGE_EMBEDDING_MODEL,
         scene_type: str = "scene",
         max_retries: int = 2,
@@ -764,6 +765,7 @@ class ImageGraphicalizer:
         values: nx.MultiDiGraph | Iterable[nx.MultiDiGraph],
         *,
         batch_size: int = 32,
+        embedding_dim: int = IMAGE_EMBEDDING_DIMENSIONS,
         skip_matching: bool = True,
     ) -> list[nx.MultiDiGraph]:
         """Embed saved image parts and attach vectors to graph part records.
@@ -778,6 +780,14 @@ class ImageGraphicalizer:
             raise ValueError("batch_size must be a positive integer")
         if not isinstance(skip_matching, bool):
             raise TypeError("skip_matching must be a bool")
+        if (
+            isinstance(embedding_dim, bool)
+            or not isinstance(embedding_dim, int)
+            or embedding_dim not in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
+        ):
+            raise ValueError(
+                f"embedding_dim must be one of {SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS}"
+            )
         if isinstance(values, nx.MultiDiGraph):
             graphs = [values]
         elif isinstance(values, (str, bytes)):
@@ -837,7 +847,7 @@ class ImageGraphicalizer:
         )
         config = {
             "model": model_id,
-            "dimension": IMAGE_EMBEDDING_DIMENSIONS,
+            "dimension": embedding_dim,
             "normalized": True,
             "precision_policy": getattr(client, "precision_policy", "client-managed"),
             "input": "image-part-v1",
@@ -851,7 +861,7 @@ class ImageGraphicalizer:
                 metadata = part.get("embedding_metadata")
                 if (
                     isinstance(vector, list)
-                    and len(vector) == IMAGE_EMBEDDING_DIMENSIONS
+                    and len(vector) == embedding_dim
                     and isinstance(metadata, Mapping)
                     and metadata.get("crop_sha256") == crop_sha256
                     and metadata.get("config_hash") == config_hash
@@ -862,7 +872,11 @@ class ImageGraphicalizer:
 
         for start in range(0, len(pending), batch_size):
             batch = pending[start:start + batch_size]
-            vectors = client.embed_images([crop_path for _graph, _part, crop_path, _digest in batch], batch_size=batch_size)
+            vectors = client.embed_images(
+                [crop_path for _graph, _part, crop_path, _digest in batch],
+                batch_size=batch_size,
+                embedding_dim=embedding_dim,
+            )
             if hasattr(vectors, "tolist"):
                 vectors = vectors.tolist()
             if not isinstance(vectors, (list, tuple)) or len(vectors) != len(batch):
@@ -879,9 +893,9 @@ class ImageGraphicalizer:
                     raise ValueError(
                         f"image_embedder returned an invalid vector for part '{batch[index][1]['part_id']}'"
                     ) from exc
-                if len(vector) != IMAGE_EMBEDDING_DIMENSIONS or not all(math.isfinite(value) for value in vector):
+                if len(vector) != embedding_dim or not all(math.isfinite(value) for value in vector):
                     raise ValueError(
-                        f"image_embedder vectors must contain {IMAGE_EMBEDDING_DIMENSIONS} finite values; "
+                        f"image_embedder vectors must contain {embedding_dim} finite values; "
                         f"part '{batch[index][1]['part_id']}' returned {len(vector)}"
                     )
                 norm = math.hypot(*vector)

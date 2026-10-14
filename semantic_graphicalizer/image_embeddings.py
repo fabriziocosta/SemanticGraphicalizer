@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 DEFAULT_IMAGE_EMBEDDING_MODEL = "google/embeddinggemma-2"
 IMAGE_EMBEDDING_DIMENSIONS = 768
+SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS = (128, 256, 512, 768)
 
 
 class ImageEmbeddingClient(Protocol):
@@ -21,6 +22,7 @@ class ImageEmbeddingClient(Protocol):
         image_paths: Sequence[str | Path],
         *,
         batch_size: int = 32,
+        embedding_dim: int = IMAGE_EMBEDDING_DIMENSIONS,
     ) -> Sequence[Sequence[float]]: ...
 
 
@@ -29,7 +31,7 @@ class CallableImageEmbeddingClient:
 
     def __init__(
         self,
-        function: Callable[[Sequence[str | Path]], Sequence[Sequence[float]]],
+        function: Callable[[Sequence[str | Path], int], Sequence[Sequence[float]]],
         *,
         model_id: str | None = None,
     ) -> None:
@@ -46,9 +48,10 @@ class CallableImageEmbeddingClient:
         image_paths: Sequence[str | Path],
         *,
         batch_size: int = 32,
+        embedding_dim: int = IMAGE_EMBEDDING_DIMENSIONS,
     ) -> Sequence[Sequence[float]]:
         del batch_size
-        return self.function(image_paths)
+        return self.function(image_paths, embedding_dim)
 
 
 class EmbeddingGemma2ImageClient:
@@ -76,12 +79,23 @@ class EmbeddingGemma2ImageClient:
         if self._model is None:
             try:
                 import torch
+                import sentence_transformers
                 from sentence_transformers import SentenceTransformer
             except ImportError as exc:  # pragma: no cover - optional dependencies
                 raise ImportError(
                     "Image embeddings require Sentence Transformers with image support; "
                     "install semantic-graphicalizer[image-embeddings]."
                 ) from exc
+            version = tuple(
+                int(component)
+                for component in sentence_transformers.__version__.split(".")[:2]
+                if component.isdigit()
+            )
+            if version < (6, 1):
+                raise ImportError(
+                    "EmbeddingGemma 2 requires sentence-transformers>=6.1.0; "
+                    "install semantic-graphicalizer[image-embeddings]."
+                )
 
             dtype = torch.float32
             if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
@@ -98,9 +112,18 @@ class EmbeddingGemma2ImageClient:
         image_paths: Sequence[str | Path],
         *,
         batch_size: int = 32,
+        embedding_dim: int = IMAGE_EMBEDDING_DIMENSIONS,
     ) -> Sequence[Sequence[float]]:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
+        if (
+            isinstance(embedding_dim, bool)
+            or not isinstance(embedding_dim, int)
+            or embedding_dim not in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
+        ):
+            raise ValueError(
+                f"embedding_dim must be one of {SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS}"
+            )
         paths = [str(path) for path in image_paths]
         if any(not path for path in paths):
             raise ValueError("image_paths must contain non-empty paths")
@@ -108,6 +131,7 @@ class EmbeddingGemma2ImageClient:
         vectors = model.encode(
             paths,
             batch_size=batch_size,
+            truncate_dim=embedding_dim,
             normalize_embeddings=True,
             convert_to_numpy=True,
             show_progress_bar=False,
@@ -118,7 +142,7 @@ class EmbeddingGemma2ImageClient:
 
 
 def as_image_embedding_client(
-    embedder: ImageEmbeddingClient | Callable[[Sequence[str | Path]], Sequence[Sequence[float]]],
+    embedder: ImageEmbeddingClient | Callable[[Sequence[str | Path], int], Sequence[Sequence[float]]],
 ) -> ImageEmbeddingClient:
     if callable(getattr(embedder, "embed_images", None)):
         return embedder  # type: ignore[return-value]

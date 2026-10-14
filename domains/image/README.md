@@ -70,8 +70,11 @@ their saved region crops:
 ```python
 embedded_graphs = graphicalizer.compute_part_embeddings(graphs, batch_size=32)
 part = embedded_graphs[0].graph["parts"][0]
-print(part["part_id"], len(part["embedding"]))  # 768 dimensions
+print(part["part_id"], len(part["embedding"]))  # 768 dimensions by default
 ```
+
+Request a Matryoshka dimension with `embedding_dim=128`, `256`, `512`, or
+`768`. The model truncates the vector and normalizes it for cosine similarity.
 
 Vectors are stored on graph part records with model and crop checksum metadata.
 Entity provenance already contains the matching `part_id`, so consumers can

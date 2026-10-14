@@ -35,6 +35,7 @@ from .image import ImageGraphicalizer, ImagePromptConfig, load_image_prompts
 from .image_embeddings import (
     DEFAULT_IMAGE_EMBEDDING_MODEL,
     IMAGE_EMBEDDING_DIMENSIONS,
+    SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS,
     CallableImageEmbeddingClient,
     EmbeddingGemma2ImageClient,
     ImageEmbeddingClient,
@@ -125,6 +126,7 @@ __all__ = [
     "EmbeddingGemma2ImageClient",
     "DEFAULT_IMAGE_EMBEDDING_MODEL",
     "IMAGE_EMBEDDING_DIMENSIONS",
+    "SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS",
     "ImagePromptConfig",
     "semantic_graph_to_abstract_graph",
     "vectorize_abstract_graphs",
