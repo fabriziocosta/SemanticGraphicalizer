@@ -18,8 +18,10 @@ stages:
     instruction: >-
       Candidate region: {region_label}. Full-scene context: {scene_summary}
       Analyze the crop and return one or more entities grounded in visible evidence. Use
-      only types from this ontology: {ontology}. Keep properties as concise name/value pairs
-      such as color, material, pose, or action. Do not repeat scene context as an entity.
+      only types from this ontology: {ontology}. Choose the most specific applicable type
+      (such as person, animal, plant, vehicle, tool, or building); use visual_entity only
+      when no narrower type fits. Keep properties as concise name/value pairs such as color,
+      material, pose, or action. Do not repeat scene context as an entity.
     output: >-
       Return entities with a local id, ontology type, mention, optional key, description,
       properties, and confidence (0 to 1 or null). Use an empty list if no entity is visible.

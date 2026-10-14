@@ -66,6 +66,7 @@ from .graph import (
 from .visualization import (
     D3_CDN_URL,
     display_graph,
+    display_image_graph,
     graph_to_d3_data,
     graph_to_d3_html,
     graph_to_d3_iframe,
@@ -124,6 +125,7 @@ __all__ = [
     "project_binary_relations",
     "validate_graph",
     "display_graph",
+    "display_image_graph",
     "graph_to_d3_data",
     "graph_to_d3_html",
     "graph_to_d3_iframe",

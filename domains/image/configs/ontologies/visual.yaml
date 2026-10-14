@@ -1,10 +1,30 @@
 name: generic-visual
-version: "1.0"
+version: "1.1"
 terms:
   - id: scene
     description: The full image scene and its background context.
   - id: visual_entity
-    description: A visible object, person, animal, plant, structure, or other foreground entity.
+    description: A visible foreground entity when no more specific type applies.
+  - id: person
+    description: A human being, including visible body parts and clothing as attributes.
+  - id: animal
+    description: A non-human animal, including visible pose and action as attributes.
+  - id: plant
+    description: A plant, tree, flower, crop, or other visible vegetation.
+  - id: vehicle
+    description: A vehicle used for transport, including cars, bicycles, boats, and aircraft.
+  - id: tool
+    description: An implement or device used to perform a task.
+  - id: building
+    description: A building or constructed structure such as a house, shop, or shed.
+  - id: road
+    description: A road, path, sidewalk, or other visible route through a scene.
+  - id: furniture
+    description: A movable furnishing such as a chair, table, bench, or cabinet.
+  - id: object
+    description: A distinct visible inanimate object not covered by a more specific type.
+  - id: landscape_feature
+    description: A natural or built environmental feature such as a hill, river, fence, or wall.
 argument_roles:
   - id: container
     description: The whole or spatial context containing another entity.
@@ -20,61 +40,61 @@ relations:
     arguments:
       container:
         cardinality: 1
-        allowed_types: [scene, visual_entity]
+        allowed_types: [scene, visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature]
       item:
         cardinality: 1..n
-        allowed_types: [visual_entity]
+        allowed_types: &visual_types [visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature]
   near:
     description: Two entities are close to one another.
     arguments:
       subject:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
       object:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
   left_of:
     description: The subject is visually left of the object.
     arguments:
       subject:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
       object:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
   right_of:
     description: The subject is visually right of the object.
     arguments:
       subject:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
       object:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
   in_front_of:
     description: The subject appears in front of the object.
     arguments:
       subject:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
       object:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
   behind:
     description: The subject appears behind the object.
     arguments:
       subject:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
       object:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
   interacting_with:
     description: The subject visibly interacts with the object.
     arguments:
       subject:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types
       object:
         cardinality: 1
-        allowed_types: [visual_entity]
+        allowed_types: *visual_types

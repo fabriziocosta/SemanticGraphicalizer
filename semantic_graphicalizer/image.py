@@ -523,6 +523,13 @@ class ImageGraphicalizer:
         seen: dict[str, int] = {}
         return [self._process(path, seen) for path in paths]
 
+    def display_on_image(self, graph: nx.MultiDiGraph, image: str | Path | Any | None = None, **kwargs: Any) -> Any:
+        """Render graph nodes at entity box centers over the source image."""
+
+        from .visualization import display_image_graph
+
+        return display_image_graph(graph, image=image, **kwargs)
+
     def fit(self, X: Any = None, y: Any = None) -> "ImageGraphicalizer":
         """Keep scikit-learn transformer compatibility; there is no fitted state."""
 

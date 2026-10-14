@@ -24,8 +24,10 @@ graph = graphs[0]
 
 The default visual ontology and image-specific prompts live under
 `configs/ontologies/` and `configs/prompts/`; pass custom YAML paths or mappings
-to `ImageGraphicalizer` to adapt them. The built-in ontology uses `scene` and
-`visual_entity` nodes with containment, spatial, and interaction relations.
+to `ImageGraphicalizer` to adapt them. The built-in ontology includes `scene`,
+a `visual_entity` fallback, and specific types such as `person`, `animal`,
+`plant`, `vehicle`, `tool`, `building`, `road`, `furniture`, `object`, and
+`landscape_feature`. It defines containment, spatial, and interaction relations.
 
 - `data/raw/` — local inputs or source manifests. Keep private or large files
   out of version control.
@@ -36,4 +38,9 @@ to `ImageGraphicalizer` to adapt them. The built-in ontology uses `scene` and
 
 Each graph records its image source, checksum, dimensions, scene summary,
 region parts, crop paths, normalized boxes, pixel boxes, and skipped-region
-warnings. OCR, video, and remote image loading are not part of this workflow.
+warnings. Use `display_image_graph(graph)` or
+`ImageGraphicalizer.display_on_image(graph)` to overlay detected boxes, graph
+nodes, relation nodes, and argument links on the source image. Whole-scene nodes
+and their relations are hidden by default to reduce clutter; pass
+`show_scene_nodes=True` to include them. OCR, video, and remote image loading
+are not part of this workflow.
