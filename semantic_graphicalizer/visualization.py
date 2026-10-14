@@ -6,7 +6,7 @@ import json
 import math
 from pathlib import Path
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Hashable, Iterable, Mapping
 from html import escape
 from textwrap import wrap
 from typing import Any
@@ -85,8 +85,8 @@ def _graph_from_value(value: Any) -> nx.Graph:
     raise TypeError("value must be a NetworkX graph")
 
 
-def _binary_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
-    """Derive display-only links from binary reified relation nodes."""
+def _relation_edge_links(graph: nx.Graph) -> list[dict[str, Any]]:
+    """Build display links for standalone reified relations."""
 
     if graph.graph.get("projection") == "binary_relations":
         return []
@@ -117,90 +117,84 @@ def _binary_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
                     return str(item["source_text"])
         return ""
 
-    derived: list[dict[str, Any]] = []
+    links: list[dict[str, Any]] = []
     for relation_id, node_data in graph.nodes(data=True):
         category = node_data.get("relation_category")
-        projection_roles = node_data.get("projection_roles")
         relation_name = node_data.get("relation")
         if not relation_name:
             continue
-        if not isinstance(projection_roles, (list, tuple)) or len(projection_roles) != 2:
+        if graph.in_degree(relation_id) > 0:
             continue
-        source_role, target_role = projection_roles
-        source_targets = [
-            target
-            for _source, target, edge_data in graph.out_edges(relation_id, data=True)
-            if edge_data.get("role") == source_role
-        ]
-        target_targets = [
-            target
-            for _source, target, edge_data in graph.out_edges(relation_id, data=True)
-            if edge_data.get("role") == target_role
-        ]
-        if len(source_targets) != 1 or len(target_targets) != 1:
+        arguments: list[tuple[Any, str | None]] = []
+        seen_targets: set[Any] = set()
+        for _source, target, edge_data in graph.out_edges(relation_id, data=True):
+            if target in seen_targets:
+                continue
+            seen_targets.add(target)
+            role = edge_data.get("role")
+            arguments.append((target, str(role) if role is not None else None))
+        if len(arguments) < 2:
             continue
-        derived.append({
-            "source": str(source_targets[0]),
-            "target": str(target_targets[0]),
-            "label": str(relation_name),
-            "predicate": str(relation_name),
-            "source_fragment": source_fragment(node_data),
-            "edge_type": "derived_projection" if category in {"temporal", "causal"} else "projection",
-            "category": category or "semantic",
-            "directed": True,
-            "relation_entity_id": str(relation_id),
-        })
-    return derived
+
+        projection_roles = node_data.get("projection_roles")
+        if (
+            len(arguments) == 2
+            and isinstance(projection_roles, (list, tuple))
+            and len(projection_roles) == 2
+        ):
+            by_role = {role: target for target, role in arguments if role is not None}
+            if all(role in by_role for role in projection_roles):
+                arguments = [(by_role[role], role) for role in projection_roles]
+
+        # Binary relations become one edge. For n-ary relations, draw one edge
+        # for each pair of distinct participants, in argument order.
+        for index, (source, source_role) in enumerate(arguments[:-1]):
+            for target, target_role in arguments[index + 1:]:
+                links.append(
+                    {
+                        "source": str(source),
+                        "target": str(target),
+                        "label": str(relation_name),
+                        "predicate": str(relation_name),
+                        "source_fragment": source_fragment(node_data),
+                        "edge_type": "relation_projection",
+                        "category": category or "semantic",
+                        "directed": True,
+                        "relation_entity_id": str(relation_id),
+                        "_relation_node_id": relation_id,
+                        "source_role": source_role,
+                        "target_role": target_role,
+                    }
+                )
+    return links
 
 
 def _display_projection_view(
     graph: nx.Graph,
     *,
-    show_derived_links: bool,
+    show_relations_as_edges: bool,
 ) -> tuple[set[Any], list[dict[str, Any]]]:
-    """Return visible nodes and links for the reified display.
+    """Return the visible graph, projecting standalone relations as edges.
 
-    Standalone binary relation nodes collapse into direct links. A binary
-    relation that is itself used as an argument remains visible so recursive
+    Relations used as arguments by another relation remain reified so recursive
     assertions retain an identifiable endpoint.
     """
 
-    if not show_derived_links:
+    if not show_relations_as_edges:
         return set(graph.nodes), []
-    binary_links = _binary_projection_links(graph)
-    if not binary_links:
+    relation_links = _relation_edge_links(graph)
+    if not relation_links:
         return set(graph.nodes), []
-    by_relation = {link["relation_entity_id"]: link for link in binary_links}
-    collapsed = {
-        relation_id
-        for relation_id in by_relation
-        if relation_id in graph and graph.in_degree(relation_id) == 0
-    }
-    collapsed_strings = {str(node) for node in collapsed}
-    changed = True
-    while changed:
-        changed = False
-        for relation_id in list(collapsed):
-            link = by_relation[relation_id]
-            if link["source"] in collapsed_strings or link["target"] in collapsed_strings:
-                collapsed.remove(relation_id)
-                collapsed_strings.remove(str(relation_id))
-                changed = True
+    collapsed = {link["_relation_node_id"] for link in relation_links}
     visible = set(graph.nodes) - collapsed
+    visible_ids = {str(node) for node in visible}
     visible_links = [
-        link for link in binary_links
-        if link["relation_entity_id"] in visible or link["relation_entity_id"] in collapsed
+        link for link in relation_links
+        if link["_relation_node_id"] in collapsed
+        and link["source"] in visible_ids
+        and link["target"] in visible_ids
     ]
     return visible, visible_links
-
-
-def _derived_projection_links(graph: nx.Graph) -> list[dict[str, Any]]:
-    """Backward-compatible temporal/causal subset of display projections."""
-
-    return [
-        link for link in _binary_projection_links(graph)
-        if link["category"] in {"temporal", "causal"}
-    ]
 
 
 def _annotate_parallel_links(links: list[dict[str, Any]]) -> None:
@@ -227,7 +221,7 @@ def graph_to_text(
     *,
     node_label_attr: str = "label",
     edge_label_attr: str = "label",
-    show_derived_links: bool = True,
+    show_relations_as_edges: bool = True,
 ) -> str:
     """Return a readable, indented text view of the graph.
 
@@ -240,7 +234,7 @@ def graph_to_text(
     graph = _graph_from_value(value)
     visible_nodes, projection_links = _display_projection_view(
         graph,
-        show_derived_links=show_derived_links,
+        show_relations_as_edges=show_relations_as_edges,
     )
     node_items = [
         (node_id, data)
@@ -331,7 +325,7 @@ def graph_to_d3_data(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
-    show_derived_links: bool = True,
+    show_relations_as_edges: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
     """Convert a graph into D3 data with wrapped multiline labels."""
 
@@ -339,7 +333,7 @@ def graph_to_d3_data(
     max_width = _validate_max_width(max_width)
     visible_nodes, projection_links = _display_projection_view(
         graph,
-        show_derived_links=show_derived_links,
+        show_relations_as_edges=show_relations_as_edges,
     )
 
     def combined_label(primary: Any, source: Any) -> str:
@@ -428,9 +422,10 @@ def graph_to_d3_data(
             for source, target, data in graph.edges(data=True)
             if source in visible_nodes and target in visible_nodes
         ]
-    if show_derived_links:
+    if show_relations_as_edges:
         for projection_link in projection_links:
             link = dict(projection_link)
+            link.pop("_relation_node_id", None)
             link["label"] = combined_label(
                 link.get("predicate", link.get("label", "")),
                 link.get("source_fragment", ""),
@@ -449,7 +444,7 @@ def graph_to_d3_html(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
-    show_derived_links: bool = True,
+    show_relations_as_edges: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
     parallel_edge_spacing: float = 48,
@@ -483,7 +478,7 @@ def graph_to_d3_html(
             edge_label_attr=edge_label_attr,
             show_source=show_source,
             max_width=max_width,
-            show_derived_links=show_derived_links,
+            show_relations_as_edges=show_relations_as_edges,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -570,33 +565,6 @@ def _d3_script(
   svg.call(d3.zoom()
     .scaleExtent([0.25, 4])
     .on("zoom", event => viewport.attr("transform", event.transform)));
-
-  const legend = svg.append("g")
-    .attr("class", "legend")
-    .attr("transform", "translate(24, 24)");
-  const legendItems = [
-    ["semantic", "#9aa0a6", ""],
-    ["temporal", "#2563eb", "6 4"],
-    ["causal", "#c2410c", ""],
-  ];
-  legendItems.forEach((item, index) => {{
-    const [label, color, dash] = item;
-    const x = index * 120;
-    legend.append("line")
-      .attr("x1", x)
-      .attr("x2", x + 24)
-      .attr("y1", 0)
-      .attr("y2", 0)
-      .attr("stroke", color)
-      .attr("stroke-width", label === "causal" ? 2.5 : 1.5)
-      .attr("stroke-dasharray", dash || null);
-    legend.append("text")
-      .attr("x", x + 30)
-      .attr("y", 4)
-      .attr("font-family", "monospace")
-      .attr("font-size", 11)
-      .text(label);
-  }});
 
   const setMultilineText = selection => {{
     selection.each(function(d) {{
@@ -829,7 +797,7 @@ def graph_to_d3_javascript(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
-    show_derived_links: bool = True,
+    show_relations_as_edges: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
     parallel_edge_spacing: float = 48,
@@ -859,7 +827,7 @@ def graph_to_d3_javascript(
             edge_label_attr=edge_label_attr,
             show_source=show_source,
             max_width=max_width,
-            show_derived_links=show_derived_links,
+            show_relations_as_edges=show_relations_as_edges,
         ),
         ensure_ascii=False,
     ).replace("<", "\\u003c")
@@ -894,7 +862,7 @@ def graph_to_d3_iframe(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
-    show_derived_links: bool = True,
+    show_relations_as_edges: bool = True,
     charge_strength: float = -180,
     link_distance: float = 90,
     parallel_edge_spacing: float = 48,
@@ -928,7 +896,7 @@ def graph_to_d3_iframe(
         edge_label_attr=edge_label_attr,
         show_source=show_source,
         max_width=max_width,
-        show_derived_links=show_derived_links,
+        show_relations_as_edges=show_relations_as_edges,
         charge_strength=charge_strength,
         link_distance=link_distance,
         parallel_edge_spacing=parallel_edge_spacing,
@@ -954,7 +922,7 @@ def _graph_to_d3_document(
     edge_label_attr: str,
     show_source: bool,
     max_width: int,
-    show_derived_links: bool,
+    show_relations_as_edges: bool,
     charge_strength: float,
     link_distance: float,
     parallel_edge_spacing: float,
@@ -977,7 +945,7 @@ def _graph_to_d3_document(
     edge_label_attr=edge_label_attr,
     show_source=show_source,
     max_width=max_width,
-    show_derived_links=show_derived_links,
+    show_relations_as_edges=show_relations_as_edges,
     charge_strength=charge_strength,
     link_distance=link_distance,
     parallel_edge_spacing=parallel_edge_spacing,
@@ -999,7 +967,7 @@ def graph_to_static_svg(
     edge_label_attr: str = "label",
     show_source: bool = True,
     max_width: int = 80,
-    show_derived_links: bool = True,
+    show_relations_as_edges: bool = True,
     parallel_edge_spacing: float = 48,
     layout: str = "auto",
 ) -> str:
@@ -1019,7 +987,7 @@ def graph_to_static_svg(
         edge_label_attr=edge_label_attr,
         show_source=show_source,
         max_width=max_width,
-        show_derived_links=show_derived_links,
+        show_relations_as_edges=show_relations_as_edges,
     )
     display_nodes = {item["id"]: item for item in display_data["nodes"]}
     display_links = display_data["links"]
@@ -1205,24 +1173,6 @@ def graph_to_static_svg(
         )
         )
 
-    legend_y = 24
-    for index, (label, color, width_value, dash) in enumerate((
-        ("semantic", "#9aa0a6", 1, ""),
-        ("temporal", "#2563eb", 1.5, "6 4"),
-        ("causal", "#c2410c", 2.5, ""),
-    )):
-        x = 24 + index * 120
-        dash_attribute = f' stroke-dasharray="{dash}"' if dash else ""
-        elements.append(
-            f'<line x1="{x}" y1="{legend_y}" x2="{x + 24}" y2="{legend_y}" '
-            f'stroke="{color}" stroke-width="{width_value}"'
-            f'{dash_attribute} />'
-        )
-        elements.append(
-            f'<text x="{x + 30}" y="{legend_y + 4}" font-family="monospace" '
-            f'font-size="11" fill="currentColor">{xml_text(label)}</text>'
-        )
-
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{int(height)}" '
         f'viewBox="0 0 {int(width)} {int(height)}" role="img" aria-label="Ontology graph">'
@@ -1235,11 +1185,35 @@ def graph_to_static_svg(
     )
 
 
-def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any) -> Any:
-    """Return a dynamic D3, static SVG, or indented text visualization."""
+def display_graph(
+    value: nx.Graph | Any,
+    *,
+    mode: str = "dynamic",
+    exclude_nodes: Hashable | Iterable[Hashable] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Return a graph visualization, optionally omitting selected nodes.
+
+    ``exclude_nodes`` accepts node IDs or an iterable of node IDs. Filtering
+    applies to the rendered copy, leaving the supplied graph unchanged.
+    """
 
     if mode not in {"dynamic", "static", "text"}:
         raise ValueError("mode must be one of 'dynamic', 'static', or 'text'")
+
+    if exclude_nodes is not None:
+        graph = _graph_from_value(value)
+        if isinstance(exclude_nodes, Hashable):
+            excluded = {exclude_nodes}
+        else:
+            try:
+                excluded = set(exclude_nodes)
+            except TypeError as exc:
+                raise TypeError("exclude_nodes must be a node ID or iterable of node IDs") from exc
+        if excluded:
+            filtered = graph.copy()
+            filtered.remove_nodes_from(excluded)
+            value = filtered
 
     if mode == "text":
         text = graph_to_text(value, **kwargs)
@@ -1272,7 +1246,7 @@ def display_graph(value: nx.Graph | Any, *, mode: str = "dynamic", **kwargs: Any
         edge_label_attr=kwargs.get("edge_label_attr", "label"),
         show_source=kwargs.get("show_source", True),
         max_width=kwargs.get("max_width", 80),
-        show_derived_links=kwargs.get("show_derived_links", True),
+        show_relations_as_edges=kwargs.get("show_relations_as_edges", True),
         charge_strength=kwargs.get("charge_strength", -180),
         link_distance=kwargs.get("link_distance", 90),
         parallel_edge_spacing=kwargs.get("parallel_edge_spacing", 48),
@@ -1356,22 +1330,32 @@ def display_image_graph(
         provenance = attributes.get("provenance", data.get("provenance", []))
         records = provenance if isinstance(provenance, (list, tuple)) else [provenance]
         locator: Mapping[str, Any] = {}
+        fallback_locator: Mapping[str, Any] = {}
         for record in records:
             if not isinstance(record, Mapping):
                 continue
             candidate = record.get("source_locator", record)
-            if isinstance(candidate, Mapping) and (
+            if not isinstance(candidate, Mapping):
+                continue
+            if candidate.get("entity_bbox") is not None:
+                locator = candidate
+                break
+            if not fallback_locator and (
                 candidate.get("normalized_bbox") is not None
                 or candidate.get("pixel_bbox") is not None
                 or candidate.get("whole_image") is True
             ):
-                locator = candidate
-                break
+                fallback_locator = candidate
+        if not locator:
+            locator = fallback_locator
         if not locator and isinstance(data.get("source_locator"), Mapping):
             locator = data["source_locator"]
         if locator.get("whole_image") is True:
             return (0, 0, width - 1, height - 1), True
-        normalized = locator.get("normalized_bbox", attributes.get("normalized_bbox", data.get("bbox")))
+        normalized = locator.get(
+            "entity_bbox",
+            locator.get("normalized_bbox", attributes.get("normalized_bbox", data.get("bbox"))),
+        )
         if isinstance(normalized, (list, tuple)) and len(normalized) == 4:
             try:
                 x0, y0, x1, y1 = (float(item) for item in normalized)
@@ -1469,19 +1453,118 @@ def display_image_graph(
             color = type_colors.get(str(graph.nodes[node_id].get("type", "entity")), "#ff5a5f")
             draw.rectangle(box, outline=rgba(color), width=line_width)
 
-    def pill(point: tuple[float, float], label: str, color: str, *, above: bool = False) -> None:
-        x, y = int(round(point[0])), int(round(point[1]))
-        bounds = draw.textbbox((0, 0), label, font=font)
-        text_width, text_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
-        padding_x, padding_y = 5, 3
-        left = max(0, min(width - text_width - 2 * padding_x, x - text_width // 2 - padding_x))
-        label_y = y - text_height - 14 if above else y - text_height // 2 - padding_y
-        label_y = max(0, min(height - text_height - 2 * padding_y, label_y))
-        rect = (left, label_y, left + text_width + 2 * padding_x, label_y + text_height + 2 * padding_y)
-        draw.rounded_rectangle(rect, radius=4, fill=rgba(color, 230), outline=(255, 255, 255, 230), width=1)
-        draw.text((left + padding_x, label_y + padding_y - bounds[1]), label, font=font, fill=(255, 255, 255, 255))
+    occupied_labels: list[tuple[int, int, int, int]] = []
+    padding_x, padding_y, label_gap = 5, 3, 6
+    max_label_chars = max(12, min(34, (width - 32) // 7))
 
-    for node_id, (box, whole_image) in boxes.items():
+    def label_lines(label: str) -> str:
+        return "\n".join(
+            line
+            for paragraph in label.splitlines()
+            for line in (wrap(paragraph, width=max_label_chars) or [""])
+        )
+
+    def label_size(label: str) -> tuple[tuple[int, int, int, int], int, int]:
+        bounds = draw.multiline_textbbox((0, 0), label, font=font, spacing=2, align="center")
+        return bounds, bounds[2] - bounds[0], bounds[3] - bounds[1]
+
+    def label_candidates(
+        point: tuple[float, float], text_width: int, text_height: int, *, box: tuple[int, int, int, int] | None = None
+    ) -> Iterable[tuple[float, float]]:
+        x, y = point
+        vertical_step = text_height + 2 * padding_y + label_gap
+        if box is not None:
+            left, top, right, bottom = box
+            for row in range(max(1, height // max(1, vertical_step))):
+                yield ((left + right) / 2, top - label_gap - text_height / 2 - row * vertical_step)
+            for row in range(max(1, height // max(1, vertical_step))):
+                yield ((left + right) / 2, bottom + label_gap + text_height / 2 + row * vertical_step)
+            horizontal_offset = text_width / 2 + label_gap
+            for row in range(max(1, height // max(1, vertical_step))):
+                offset_y = row * vertical_step
+                yield (left - horizontal_offset, (top + bottom) / 2 + offset_y)
+                yield (right + horizontal_offset, (top + bottom) / 2 + offset_y)
+                if row:
+                    yield (left - horizontal_offset, (top + bottom) / 2 - offset_y)
+                    yield (right + horizontal_offset, (top + bottom) / 2 - offset_y)
+        else:
+            yield (x, y)
+            step_x = text_width + 2 * padding_x + label_gap
+            rings = max(width // max(1, step_x), height // max(1, vertical_step))
+            for ring in range(1, rings + 1):
+                offsets = (
+                    (0, -ring * vertical_step), (0, ring * vertical_step),
+                    (-ring * step_x, 0), (ring * step_x, 0),
+                    (-ring * step_x, -ring * vertical_step),
+                    (ring * step_x, -ring * vertical_step),
+                    (-ring * step_x, ring * vertical_step),
+                    (ring * step_x, ring * vertical_step),
+                )
+                for offset_x, offset_y in offsets:
+                    yield (x + offset_x, y + offset_y)
+
+        # If nearby positions are full, scan the canvas for a clear slot so a
+        # dense group of labels can spread out without covering one another.
+        cell_width = text_width + 2 * padding_x + label_gap
+        cell_height = text_height + 2 * padding_y + label_gap
+        for row in range(max(1, height // max(1, cell_height))):
+            for column in range(max(1, width // max(1, cell_width))):
+                yield (
+                    padding_x + text_width / 2 + column * cell_width,
+                    padding_y + text_height / 2 + row * cell_height,
+                )
+
+    def pill(
+        point: tuple[float, float],
+        label: str,
+        color: str,
+        *,
+        box: tuple[int, int, int, int] | None = None,
+    ) -> bool:
+        label = label_lines(label)
+        bounds, text_width, text_height = label_size(label)
+        rect_width = text_width + 2 * padding_x
+        rect_height = text_height + 2 * padding_y
+        if rect_width > width or rect_height > height:
+            return False
+
+        for center_x, center_y in label_candidates(point, text_width, text_height, box=box):
+            left = max(0, min(width - rect_width, int(round(center_x - rect_width / 2))))
+            top = max(0, min(height - rect_height, int(round(center_y - rect_height / 2))))
+            rect = (left, top, left + rect_width, top + rect_height)
+            if any(
+                rect[0] < other[2] + label_gap
+                and rect[2] + label_gap > other[0]
+                and rect[1] < other[3] + label_gap
+                and rect[3] + label_gap > other[1]
+                for other in occupied_labels
+            ):
+                continue
+            draw.rounded_rectangle(
+                rect,
+                radius=4,
+                fill=rgba(color, 230),
+                outline=(255, 255, 255, 230),
+                width=1,
+            )
+            draw.multiline_text(
+                (left + padding_x - bounds[0], top + padding_y - bounds[1]),
+                label,
+                font=font,
+                spacing=2,
+                align="center",
+                fill=(255, 255, 255, 255),
+            )
+            occupied_labels.append(rect)
+            return True
+        return False
+
+    entity_label_nodes = sorted(
+        boxes,
+        key=lambda node_id: (boxes[node_id][0][1], boxes[node_id][0][0], str(node_id)),
+    )
+    for node_id in entity_label_nodes:
+        box, whole_image = boxes[node_id]
         data = graph.nodes[node_id]
         point = positions[node_id]
         color = type_colors.get(str(data.get("type", "entity")), "#ff5a5f")
@@ -1492,13 +1575,10 @@ def display_image_graph(
             attributes = data.get("attributes") if isinstance(data.get("attributes"), Mapping) else {}
             mentions = attributes.get("mentions", data.get("mentions", []))
             mention = mentions[0] if isinstance(mentions, (list, tuple)) and mentions else str(node_id).split(":")[-1]
-            label = f"{data.get('type', 'entity')}: {mention}"
+            label = f"{data.get('type', 'entity')}\n{mention}"
             if show_ids:
-                label = f"{label} · {node_id}"
-            above = not whole_image
-            if above:
-                cy = box[1]
-            pill((point[0], cy), label, color, above=above)
+                label = f"{label}\n{node_id}"
+            pill(point, label, color, box=None if whole_image else box)
 
     if show_relations:
         for relation_id in relation_targets:
@@ -1511,7 +1591,7 @@ def display_image_graph(
             if show_labels:
                 label = f"[{data.get('relation', 'relation')}]"
                 if show_ids:
-                    label = f"{label} · {relation_id}"
+                    label = f"{label}\n{relation_id}"
                 pill(point, label, color)
 
     try:

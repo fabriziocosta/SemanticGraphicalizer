@@ -61,10 +61,14 @@ object.
 
 Use `project_binary_relations(graph, ontology)` for an explicit, schema-driven
 direct-edge view. Use `graph_to_dict` and `graph_from_dict` for JSON-safe
-round-trip serialization. Visualization keeps the reified argument edges and
-also derives colored temporal and causal links when the ontology declares a
-category and ordered binary projection; pass `show_derived_links=False` to
-hide those display-only overlays.
+round-trip serialization. Visualization projects standalone reified relations
+to direct edges by default, without requiring ontology projection settings.
+N-ary relations render as one edge per pair of participants, following their
+argument order. A relation node used as an argument by another relation stays
+reified. Pass `show_relations_as_edges=False` to keep the reified relation
+nodes and their argument edges. Pass node IDs with
+`display_graph(graph, exclude_nodes=...)` to omit nodes from a rendered copy
+without changing the graph data.
 Document IDs are stable content-derived IDs by default; pass
 `document_id_fn=(text, index) -> str` when an external identifier is available.
 Node and edge provenance includes source spans when the model's source text can

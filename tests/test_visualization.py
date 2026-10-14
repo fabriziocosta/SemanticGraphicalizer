@@ -18,7 +18,7 @@ from semantic_graphicalizer.graph import materialize_graph, project_binary_relat
 from semantic_graphicalizer.types import Argument, Entity, RelationInstance
 
 
-def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
+def test_reified_relations_are_projected_to_edges_for_display() -> None:
     ontology = load_ontology("domains/text/configs/ontologies/aesop.yaml")
     graph = materialize_graph(
         [
@@ -53,17 +53,20 @@ def test_reified_temporal_and_causal_links_are_derived_for_display() -> None:
     )
 
     data = graph_to_d3_data(graph)
-    derived = [link for link in data["links"] if link["edge_type"] == "derived_projection"]
-    assert {(link["predicate"], link["category"]) for link in derived} == {
+    projected_relations = [
+        link for link in data["links"] if link["edge_type"] == "relation_projection"
+    ]
+    assert {(link["predicate"], link["category"]) for link in projected_relations} == {
         ("causes", "causal"),
         ("before", "temporal"),
+        ("has_trait", "semantic"),
     }
     assert sum(link["edge_type"] == "argument" for link in data["links"]) == 0
     assert {node["id"] for node in data["nodes"]} == {"event-a", "event-b", "animal", "trait"}
     projected_trait = next(link for link in data["links"] if link["predicate"] == "has_trait")
-    assert projected_trait["edge_type"] == "projection"
+    assert projected_trait["edge_type"] == "relation_projection"
     assert projected_trait["category"] == "semantic"
-    unprojected = graph_to_d3_data(graph, show_derived_links=False)
+    unprojected = graph_to_d3_data(graph, show_relations_as_edges=False)
     assert "trait-assertion" in {node["id"] for node in unprojected["nodes"]}
     assert any(
         link["source"] == "trait-assertion" and link["predicate"] == "bearer"

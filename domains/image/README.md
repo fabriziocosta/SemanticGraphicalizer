@@ -22,12 +22,19 @@ graphs = graphicalizer.transform(Path("domains/image/data/raw/scene.jpg"))
 graph = graphs[0]
 ```
 
+The repository includes an office sample image at
+`data/raw/office_scene.png`. To run the example against it, pass
+`Path("domains/image/data/raw/office_scene.png")` to `transform`.
+
 The default visual ontology and image-specific prompts live under
 `configs/ontologies/` and `configs/prompts/`; pass custom YAML paths or mappings
 to `ImageGraphicalizer` to adapt them. The built-in ontology includes `scene`,
 a `visual_entity` fallback, and specific types such as `person`, `animal`,
 `plant`, `vehicle`, `tool`, `building`, `road`, `furniture`, `object`, and
-`landscape_feature`. It defines containment, spatial, and interaction relations.
+`landscape_feature`. Office types include `chair`, `desk`, `table`, `monitor`,
+`computer`, `laptop`, `keyboard`, `mouse`, `printer`, `telephone`,
+`filing_cabinet`, `shelf`, `bookshelf`, `whiteboard`, `desk_lamp`, `document`,
+and `office_supply`. It defines containment, spatial, and interaction relations.
 
 - `data/raw/` — local inputs or source manifests. Keep private or large files
   out of version control.
@@ -38,9 +45,16 @@ a `visual_entity` fallback, and specific types such as `person`, `animal`,
 
 Each graph records its image source, checksum, dimensions, scene summary,
 region parts, crop paths, normalized boxes, pixel boxes, and skipped-region
-warnings. Use `display_image_graph(graph)` or
+warnings. Crop analysis also returns an entity box within each crop. These boxes
+are mapped to the source image and used to merge same-type, semantically matching
+detections whose boxes overlap across crops. The merged node retains provenance
+from each crop, and `graph.graph["duplicate_entities_merged"]` records how many
+detections were merged. Use `display_image_graph(graph)` or
 `ImageGraphicalizer.display_on_image(graph)` to overlay detected boxes, graph
 nodes, relation nodes, and argument links on the source image. Whole-scene nodes
 and their relations are hidden by default to reduce clutter; pass
-`show_scene_nodes=True` to include them. OCR, video, and remote image loading
-are not part of this workflow.
+`show_scene_nodes=True` to include them. The standard `display_graph` renderer
+also accepts explicit node IDs through `exclude_nodes`, for example to omit
+the scene node from a graph view. Image overlay labels use separate lines and
+are repositioned to avoid colliding with other labels. OCR, video, and remote
+image loading are not part of this workflow.

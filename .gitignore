@@ -11,3 +11,4 @@ dist/
 /domains/*/data/processed/**
 !/domains/*/data/raw/.gitkeep
 !/domains/*/data/processed/.gitkeep
+!/domains/image/data/raw/office_scene.png

@@ -143,11 +143,17 @@ def _analysis_schema(ontology: OntologyConfig) -> dict[str, Any]:
             "type": {"type": "string", "enum": sorted(ontology.term_ids)},
             "mention": {"type": "string"},
             "key": {"type": ["string", "null"]},
+            "bbox": {
+                "type": ["array", "null"],
+                "items": {"type": "number", "minimum": 0, "maximum": 1},
+                "minItems": 4,
+                "maxItems": 4,
+            },
             "description": {"type": "string"},
             "properties": {"type": "array", "items": properties},
             "confidence": _confidence_schema(),
         },
-        "required": ["id", "type", "mention", "key", "description", "properties", "confidence"],
+        "required": ["id", "type", "mention", "key", "bbox", "description", "properties", "confidence"],
         "additionalProperties": False,
     }
     return {
@@ -207,6 +213,36 @@ def _bbox_pixels(raw_bbox: Any, width: int, height: int) -> tuple[list[float], t
     if right <= left or bottom <= top:
         raise ValueError("bbox produces an empty pixel crop")
     return box, (left, top, right, bottom)
+
+
+def _bbox_overlap(first: list[float], second: list[float]) -> tuple[float, float, float]:
+    """Return IoU, intersection over smaller box, and center distance."""
+
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    intersection = max(0.0, right - left) * max(0.0, bottom - top)
+    first_area = (first[2] - first[0]) * (first[3] - first[1])
+    second_area = (second[2] - second[0]) * (second[3] - second[1])
+    union = first_area + second_area - intersection
+    smaller_area = min(first_area, second_area)
+    iou = intersection / union if union else 0.0
+    smaller_coverage = intersection / smaller_area if smaller_area else 0.0
+    first_center = ((first[0] + first[2]) / 2, (first[1] + first[3]) / 2)
+    second_center = ((second[0] + second[2]) / 2, (second[1] + second[3]) / 2)
+    center_distance = math.dist(first_center, second_center)
+    return iou, smaller_coverage, center_distance
+
+
+def _mention_similarity(first: Any, second: Any) -> float:
+    """Measure token overlap while tolerating extra visual adjectives."""
+
+    first_tokens = set(re.findall(r"[a-z0-9]+", str(first).casefold()))
+    second_tokens = set(re.findall(r"[a-z0-9]+", str(second).casefold()))
+    if not first_tokens or not second_tokens:
+        return 0.0
+    return len(first_tokens & second_tokens) / min(len(first_tokens), len(second_tokens))
 
 
 class ImageGraphicalizer:
@@ -347,7 +383,7 @@ class ImageGraphicalizer:
             raise ValueError("image stage 'inventory' returned invalid 'regions' (expected a list)")
         return description, regions
 
-    def _analyze_part(self, part: Part, scene_summary: str) -> list[Entity]:
+    def _analyze_part(self, part: Part, scene_summary: str) -> tuple[list[Entity], list[str]]:
         response = self._request(
             "analyze_entity",
             {"ontology": self.ontology.as_prompt(), "scene_summary": scene_summary, "region_label": str(part.metadata["label"])},
@@ -360,6 +396,7 @@ class ImageGraphicalizer:
         if not isinstance(raw_entities, list):
             raise ValueError("image stage 'analyze_entity' returned invalid 'entities' (expected a list)")
         entities: list[Entity] = []
+        warnings: list[str] = []
         local_ids: set[str] = set()
         for index, raw in enumerate(raw_entities):
             item = _object(raw, "analyze_entity", f"entities[{index}]")
@@ -374,6 +411,33 @@ class ImageGraphicalizer:
             key = item.get("key")
             region_key = part.part_id.split(":region:", 1)[-1]
             entity_id = f"{part.document_id}:entity:{region_key}:{local_id}"
+            local_bbox: list[float] | None = None
+            entity_bbox: list[float] | None = None
+            if item.get("bbox") is not None:
+                pixel_bbox = part.source_locator.get("pixel_bbox")
+                if not isinstance(pixel_bbox, (list, tuple)) or len(pixel_bbox) != 4:
+                    raise ValueError("image part source_locator must contain pixel_bbox")
+                crop_width = int(pixel_bbox[2]) - int(pixel_bbox[0])
+                crop_height = int(pixel_bbox[3]) - int(pixel_bbox[1])
+                try:
+                    local_bbox, _ = _bbox_pixels(item["bbox"], crop_width, crop_height)
+                except ValueError as exc:
+                    warnings.append(
+                        f"entity {local_id!r} in part {part.part_id!r} retained without "
+                        f"entity-level bbox: {exc}"
+                    )
+                else:
+                    crop_bbox = part.source_locator.get("normalized_bbox")
+                    if not isinstance(crop_bbox, (list, tuple)) or len(crop_bbox) != 4:
+                        raise ValueError("image part source_locator must contain normalized_bbox")
+                    crop_x0, crop_y0, crop_x1, crop_y1 = (float(value) for value in crop_bbox)
+                    local_x0, local_y0, local_x1, local_y1 = local_bbox
+                    entity_bbox = [
+                        crop_x0 + local_x0 * (crop_x1 - crop_x0),
+                        crop_y0 + local_y0 * (crop_y1 - crop_y0),
+                        crop_x0 + local_x1 * (crop_x1 - crop_x0),
+                        crop_y0 + local_y1 * (crop_y1 - crop_y0),
+                    ]
             properties = item.get("properties", [])
             if not isinstance(properties, list):
                 raise ValueError("image entity properties must be a list")
@@ -382,7 +446,19 @@ class ImageGraphicalizer:
                 "description": str(item.get("description") or ""),
                 "properties": {},
                 "confidence": item.get("confidence"),
-                "provenance": [{"source_locator": dict(part.source_locator), "crop_path": str(part.content)}],
+                "provenance": [{
+                    "part_id": part.part_id,
+                    "source_locator": {
+                        **dict(part.source_locator),
+                        **({"entity_bbox": entity_bbox, "entity_bbox_crop": local_bbox} if entity_bbox else {}),
+                    },
+                    "crop_path": str(part.content),
+                    "mention": mention,
+                    "description": str(item.get("description") or ""),
+                    "key": _required_text(key, "analyze_entity", f"entities[{index}].key") if key is not None else None,
+                    "properties": {str(prop.get("name")): str(prop.get("value")) for prop in properties if isinstance(prop, Mapping)},
+                    "confidence": item.get("confidence"),
+                }],
             }
             for prop_index, raw_property in enumerate(properties):
                 prop = _object(raw_property, "analyze_entity", f"entities[{index}].properties[{prop_index}]")
@@ -392,7 +468,137 @@ class ImageGraphicalizer:
             if key is not None:
                 attributes["key"] = _required_text(key, "analyze_entity", f"entities[{index}].key")
             entities.append(Entity(entity_id, entity_type, None, attributes))
-        return entities
+        return entities, warnings
+
+    @staticmethod
+    def _same_visual_entity(first: Entity, second: Entity) -> bool:
+        """Match the same typed entity only when crop geometry also agrees."""
+
+        if first.type != second.type:
+            return False
+        first_attributes = first.attributes
+        second_attributes = second.attributes
+        first_provenance = first_attributes.get("provenance", [])
+        second_provenance = second_attributes.get("provenance", [])
+        if not isinstance(first_provenance, list) or not isinstance(second_provenance, list):
+            return False
+        first_parts = {record.get("part_id") for record in first_provenance if isinstance(record, Mapping)}
+        second_parts = {record.get("part_id") for record in second_provenance if isinstance(record, Mapping)}
+        first_parts.discard(None)
+        second_parts.discard(None)
+        if not first_parts or not second_parts:
+            return False
+        for first_record in first_provenance:
+            if not isinstance(first_record, Mapping):
+                continue
+            first_locator = first_record.get("source_locator", {})
+            if not isinstance(first_locator, Mapping):
+                continue
+            first_box = first_locator.get("entity_bbox", first_locator.get("normalized_bbox"))
+            for second_record in second_provenance:
+                if not isinstance(second_record, Mapping):
+                    continue
+                second_locator = second_record.get("source_locator", {})
+                if not isinstance(second_locator, Mapping):
+                    continue
+                first_precise = first_locator.get("entity_bbox") is not None
+                second_precise = second_locator.get("entity_bbox") is not None
+                if (
+                    first_record.get("part_id") == second_record.get("part_id")
+                    and not (first_precise and second_precise)
+                ):
+                    continue
+                second_box = second_locator.get("entity_bbox", second_locator.get("normalized_bbox"))
+                if not (
+                    isinstance(first_box, (list, tuple)) and len(first_box) == 4
+                    and isinstance(second_box, (list, tuple)) and len(second_box) == 4
+                ):
+                    continue
+                try:
+                    iou, smaller_coverage, center_distance = _bbox_overlap(
+                        [float(value) for value in first_box],
+                        [float(value) for value in second_box],
+                    )
+                except (TypeError, ValueError):
+                    continue
+                first_mentions = first_attributes.get("mentions", [])
+                second_mentions = second_attributes.get("mentions", [])
+                similarity = max(
+                    (
+                        _mention_similarity(first_mention, second_mention)
+                        for first_mention in first_mentions
+                        for second_mention in second_mentions
+                    ),
+                    default=0.0,
+                )
+                first_key = str(first_record.get("key") or first_attributes.get("key") or "").casefold().strip()
+                second_key = str(second_record.get("key") or second_attributes.get("key") or "").casefold().strip()
+                if first_precise and second_precise:
+                    same_location = iou >= 0.3 or (smaller_coverage >= 0.8 and center_distance <= 0.1)
+                    strong_spatial_match = iou >= 0.7 or (
+                        smaller_coverage >= 0.95 and center_distance <= 0.05
+                    )
+                else:
+                    # Crop boxes are only a fallback. Require a close match to
+                    # avoid merging similar objects from wide regions.
+                    same_location = iou >= 0.55
+                    strong_spatial_match = False
+                same_identity_hint = (
+                    bool(first_key and first_key == second_key)
+                    or similarity >= 0.5
+                    or strong_spatial_match
+                )
+                if same_identity_hint and same_location:
+                    return True
+        return False
+
+    @classmethod
+    def _deduplicate_entities(cls, entities: list[Entity]) -> list[Entity]:
+        """Merge repeated detections across crops and retain all provenance."""
+
+        merged: list[Entity] = []
+        for entity in entities:
+            match_index = next(
+                (index for index, current in enumerate(merged) if cls._same_visual_entity(current, entity)),
+                None,
+            )
+            if match_index is None:
+                merged.append(entity)
+                continue
+
+            current = merged[match_index]
+            attributes = {**current.attributes}
+            mentions = list(attributes.get("mentions", []))
+            for mention in entity.attributes.get("mentions", []):
+                if not any(str(mention).casefold() == str(existing).casefold() for existing in mentions):
+                    mentions.append(mention)
+            attributes["mentions"] = mentions
+
+            provenance = list(attributes.get("provenance", []))
+            provenance.extend(entity.attributes.get("provenance", []))
+            attributes["provenance"] = provenance
+
+            descriptions = [
+                value for value in (
+                    attributes.get("description"),
+                    entity.attributes.get("description"),
+                ) if value
+            ]
+            attributes["descriptions"] = list(dict.fromkeys(descriptions))
+            properties = dict(attributes.get("properties", {}))
+            for name, value in entity.attributes.get("properties", {}).items():
+                properties.setdefault(name, value)
+            attributes["properties"] = properties
+            confidences = [
+                value for value in (attributes.get("confidence"), entity.attributes.get("confidence"))
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            ]
+            if confidences:
+                attributes["confidence"] = max(confidences)
+            if not attributes.get("key") and entity.attributes.get("key"):
+                attributes["key"] = entity.attributes["key"]
+            merged[match_index] = Entity(current.id, current.type, current.relation, attributes)
+        return merged
 
     def _relate(self, document_id: str, scene_summary: str, entities: list[Entity]) -> list[RelationInstance]:
         entity_ids = [entity.id for entity in entities]
@@ -482,9 +688,21 @@ class ImageGraphicalizer:
         )]
         for part in parts:
             started = time.perf_counter()
-            extracted = self._analyze_part(part, scene_summary)
+            extracted, analysis_warnings = self._analyze_part(part, scene_summary)
             entities.extend(extracted)
+            warnings.extend(analysis_warnings)
             stats.append(StageStat(document_id, "analyze_entity", time.perf_counter() - started, 1, len(extracted), part.part_id))
+        started = time.perf_counter()
+        extracted_entity_count = len(entities)
+        entities = self._deduplicate_entities(entities)
+        duplicate_entity_count = extracted_entity_count - len(entities)
+        stats.append(StageStat(
+            document_id,
+            "deduplicate_entities",
+            time.perf_counter() - started,
+            extracted_entity_count,
+            len(entities),
+        ))
         started = time.perf_counter()
         relations = self._relate(document_id, scene_summary, entities)
         stats.append(StageStat(document_id, "relate", time.perf_counter() - started, len(entities), len(relations)))
@@ -500,12 +718,17 @@ class ImageGraphicalizer:
             image_sha256=document.metadata["sha256"],
             image_size={"width": width, "height": height},
             scene_summary=scene_summary,
+            duplicate_entities_merged=duplicate_entity_count,
             parts=[{**asdict(part), "content": str(part.content)} for part in parts],
             warnings=warnings,
             stats=[asdict(stat) for stat in stats],
         )
         if self.verbose:
-            print(f"[ImageGraphicalizer] {path.name}: {len(parts)} regions, {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+            print(
+                f"[ImageGraphicalizer] {path.name}: {len(parts)} regions, "
+                f"merged {duplicate_entity_count} duplicate detections, "
+                f"{graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
+            )
         return graph
 
     def transform(self, X: str | Path | Iterable[str | Path]) -> list[nx.MultiDiGraph]:

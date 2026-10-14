@@ -1,5 +1,5 @@
 name: generic-visual
-version: "1.1"
+version: "1.2"
 terms:
   - id: scene
     description: The full image scene and its background context.
@@ -25,6 +25,40 @@ terms:
     description: A distinct visible inanimate object not covered by a more specific type.
   - id: landscape_feature
     description: A natural or built environmental feature such as a hill, river, fence, or wall.
+  - id: chair
+    description: An office chair or other seat used by a person at a desk or table.
+  - id: desk
+    description: A work desk or workstation surface used for office tasks.
+  - id: table
+    description: A table used in an office, such as a meeting or side table.
+  - id: monitor
+    description: A standalone computer display screen.
+  - id: computer
+    description: A desktop computer or computer tower.
+  - id: laptop
+    description: A portable computer with an attached screen and keyboard.
+  - id: keyboard
+    description: A physical computer keyboard.
+  - id: mouse
+    description: A computer pointing device, including a wired or wireless mouse.
+  - id: printer
+    description: An office printer, copier, or combined print and scan device.
+  - id: telephone
+    description: An office telephone or desk phone.
+  - id: filing_cabinet
+    description: A cabinet with drawers used to store office files or supplies.
+  - id: shelf
+    description: A shelf or shelving unit used to store books, files, or office items.
+  - id: bookshelf
+    description: A bookcase or shelving unit primarily used to store books.
+  - id: whiteboard
+    description: A whiteboard or writable presentation board.
+  - id: desk_lamp
+    description: A small adjustable lamp placed on a desk or work surface.
+  - id: document
+    description: A visible sheet, folder, notebook, or other office document.
+  - id: office_supply
+    description: A small office item such as a pen, stapler, tape dispenser, or paper clip.
 argument_roles:
   - id: container
     description: The whole or spatial context containing another entity.
@@ -40,10 +74,10 @@ relations:
     arguments:
       container:
         cardinality: 1
-        allowed_types: [scene, visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature]
+        allowed_types: [scene, visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature, chair, desk, table, monitor, computer, laptop, keyboard, mouse, printer, telephone, filing_cabinet, shelf, bookshelf, whiteboard, desk_lamp, document, office_supply]
       item:
         cardinality: 1..n
-        allowed_types: &visual_types [visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature]
+        allowed_types: &visual_types [visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature, chair, desk, table, monitor, computer, laptop, keyboard, mouse, printer, telephone, filing_cabinet, shelf, bookshelf, whiteboard, desk_lamp, document, office_supply]
   near:
     description: Two entities are close to one another.
     arguments:

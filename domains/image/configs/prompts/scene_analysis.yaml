@@ -21,10 +21,13 @@ stages:
       only types from this ontology: {ontology}. Choose the most specific applicable type
       (such as person, animal, plant, vehicle, tool, or building); use visual_entity only
       when no narrower type fits. Keep properties as concise name/value pairs such as color,
-      material, pose, or action. Do not repeat scene context as an entity.
+      material, pose, or action. Focus on the candidate entity and its integral components;
+      do not repeat unrelated objects that are only partly visible as crop context. Do not
+      repeat scene context as an entity.
     output: >-
-      Return entities with a local id, ontology type, mention, optional key, description,
-      properties, and confidence (0 to 1 or null). Use an empty list if no entity is visible.
+      Return entities with a local id, ontology type, mention, optional key, a tight normalized
+      bbox relative to this crop [x_min, y_min, x_max, y_max] (or null if it cannot be localized),
+      description, properties, and confidence (0 to 1 or null). Use an empty list if no entity is visible.
   relate:
     system: You identify grounded spatial and interaction relations across an image scene.
     instruction: >-
