@@ -40,3 +40,8 @@ graphicalizer.compute_embeddings(graphs)
 
 Pass a custom client using `embedder=...` to select another provider. For
 OpenAI embeddings, inject `OpenAIEmbeddingClient` explicitly.
+
+Paragraph parts are processed in input order. Set
+`SemanticTextGraphicalizer(max_concurrent_parts=N)` to allow up to `N` chunks
+to run their text stages concurrently; the default of `1` preserves sequential
+model request behavior.

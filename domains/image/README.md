@@ -61,6 +61,15 @@ the scene node from a graph view. Image overlay labels use separate lines and
 are repositioned to avoid colliding with other labels. OCR, video, and remote
 image loading are not part of this workflow.
 
+Inventory is limited to 32 regions by default, and crop analysis runs up to
+four requests concurrently while preserving region order in the returned graph.
+Set `max_regions` or `max_concurrent_analyses` when constructing the
+graphicalizer to tune those bounds. Crop files use a region-list fingerprinted
+directory and are written atomically, so interrupted or concurrent runs do not
+overwrite an unrelated run's crop set. Custom request clients should support
+concurrent calls at the configured limit; set `max_concurrent_analyses=1` for
+clients that require serial access.
+
 ### Image part embeddings
 
 Install the local EmbeddingGemma 2 runtime with

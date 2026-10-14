@@ -8,7 +8,8 @@ stages:
       Return one normalized bounding box for each entity as [x_min, y_min, x_max, y_max]
       with coordinates from 0 to 1 relative to the full image. Include useful visual labels;
       do not infer details that are not visible. Use this ontology as context:
-      {ontology}
+      {ontology}. Return no more than {max_regions} regions, prioritizing distinct,
+      well-localized entities over broad areas or repeated proposals.
     output: >-
       Return scene_description and regions. Each region has a stable local id, a label, a
       normalized bbox, and confidence (0 to 1 or null). Return an empty regions list when

@@ -16,6 +16,7 @@ from .config import OntologyConfig, PromptConfig
 from .exceptions import StageOutputError
 from .graph import GraphValidationError, materialize_graph
 from .model import ModelRequest, ModelContent, RequestModelClient, as_model_client
+from .part_pipeline import InputPartitioner, analyze_parts
 from .types import Argument, Chunk, DocumentInput, Entity, NormalizedText, Part, RelationInstance, StageStat, Summary
 
 
@@ -24,12 +25,6 @@ _T = TypeVar("_T")
 
 class Segmenter(Protocol):
     def segment(self, document_id: str, text: str) -> list[Chunk]: ...
-
-
-class InputPartitioner(Protocol):
-    """Split modality-specific document inputs into located generic parts."""
-
-    def partition(self, document: DocumentInput) -> list[Part]: ...
 
 
 class EntityResolver(Protocol):
@@ -215,6 +210,7 @@ class SemanticPipeline:
     verbose: bool = True
     max_retries: int = 2
     retry_backoff: float = 0.25
+    max_concurrent_parts: int = 1
 
     def __post_init__(self) -> None:
         self.model = as_model_client(self.model)
@@ -222,6 +218,12 @@ class SemanticPipeline:
             raise ValueError("max_retries must be a non-negative integer")
         if isinstance(self.retry_backoff, bool) or not isinstance(self.retry_backoff, (int, float)) or self.retry_backoff < 0:
             raise ValueError("retry_backoff must be non-negative")
+        if (
+            isinstance(self.max_concurrent_parts, bool)
+            or not isinstance(self.max_concurrent_parts, int)
+            or self.max_concurrent_parts < 1
+        ):
+            raise ValueError("max_concurrent_parts must be a positive integer")
 
     def _stat(self, stats: list[StageStat], document_id: str, stage: str, started: float, input_count: int, output_count: int, chunk_id: str | None = None, details: dict[str, Any] | None = None) -> None:
         stat = StageStat(document_id, stage, time.perf_counter() - started, input_count, output_count, chunk_id, details or {})
@@ -524,23 +526,56 @@ class SemanticPipeline:
         document = DocumentInput(document_id, "text", text)
         partition = getattr(self.segmenter, "partition", None)
         if callable(partition):
-            parts = partition(document)
+            parts = list(partition(document))
             chunks = [part.as_text_chunk() for part in parts]
         else:
             # Keep third-party segmenters that implement the original API
             # working while they migrate to InputPartitioner.
             chunks = self.segmenter.segment(document_id, text)
+            parts = [Part.from_chunk(chunk) for chunk in chunks]
         self._stat(stats, document_id, "segment", started, 1, len(chunks), details={"input_chars": len(text), "chunk_chars": sum(len(chunk.text) for chunk in chunks)})
         summaries: list[Summary] = []
         normalized: list[NormalizedText] = []
         assertions: list[dict[str, Any]] = []
         entities: list[Entity] = []
         relations: list[RelationInstance] = []
-        for chunk in chunks:
-            started = time.perf_counter(); summary = self._summarize(chunk); summaries.append(summary); self._stat(stats, document_id, "summarize", started, 1, 1, chunk.chunk_id)
-            started = time.perf_counter(); normalized_text = self._normalize(summary); normalized.append(normalized_text); self._stat(stats, document_id, "normalize", started, 1, 1, chunk.chunk_id)
-            started = time.perf_counter(); chunk_assertions = self._decompose(normalized_text); assertions.extend(chunk_assertions); self._stat(stats, document_id, "decompose", started, 1, len(chunk_assertions), chunk.chunk_id)
-            started = time.perf_counter(); chunk_entities, chunk_relations = self._extract(normalized_text, chunk_assertions); entities.extend(chunk_entities); relations.extend(chunk_relations); self._stat(stats, document_id, "extract", started, len(chunk_assertions), len(chunk_entities) + len(chunk_relations), chunk.chunk_id)
+        def analyze_text_part(part: Part):
+            chunk = part.as_text_chunk()
+            part_stats: list[StageStat] = []
+            started = time.perf_counter()
+            summary = self._summarize(chunk)
+            self._stat(part_stats, document_id, "summarize", started, 1, 1, chunk.chunk_id)
+            started = time.perf_counter()
+            normalized_text = self._normalize(summary)
+            self._stat(part_stats, document_id, "normalize", started, 1, 1, chunk.chunk_id)
+            started = time.perf_counter()
+            chunk_assertions = self._decompose(normalized_text)
+            self._stat(part_stats, document_id, "decompose", started, 1, len(chunk_assertions), chunk.chunk_id)
+            started = time.perf_counter()
+            chunk_entities, chunk_relations = self._extract(normalized_text, chunk_assertions)
+            self._stat(
+                part_stats,
+                document_id,
+                "extract",
+                started,
+                len(chunk_assertions),
+                len(chunk_entities) + len(chunk_relations),
+                chunk.chunk_id,
+            )
+            return summary, normalized_text, chunk_assertions, chunk_entities, chunk_relations, part_stats
+
+        part_results = analyze_parts(
+            parts,
+            analyze_text_part,
+            max_workers=self.max_concurrent_parts,
+        )
+        for summary, normalized_text, chunk_assertions, chunk_entities, chunk_relations, part_stats in part_results:
+            summaries.append(summary)
+            normalized.append(normalized_text)
+            assertions.extend(chunk_assertions)
+            entities.extend(chunk_entities)
+            relations.extend(chunk_relations)
+            stats.extend(part_stats)
         unique_entities = {entity.id: entity for entity in entities}
         started = time.perf_counter(); resolved = self._resolve(document_id, text, list(unique_entities.values()), relations); relations.extend(resolved); self._stat(stats, document_id, "resolve", started, len(entities) + len(relations), len(resolved))
         started = time.perf_counter()

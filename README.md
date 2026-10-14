@@ -22,8 +22,10 @@ graphs = graphicalizer.transform(["The fox met the crow."])
 
 `DocumentInput` and `Part` provide modality-neutral contracts for input
 adapters. Parts carry a modality, content or a media reference, a source
-locator, and metadata. The paragraph segmenter exposes
-`partition(DocumentInput)` and still supports its original `segment(...)`
+locator, and metadata. Text and image workflows use the shared ordered
+`analyze_parts` scheduler and graph materializer; their partitioning, prompts,
+and domain stages remain configurable independently. The paragraph segmenter
+exposes `partition(DocumentInput)` and still supports its original `segment(...)`
 method. `SemanticTextGraphicalizer` remains the text workflow. `SemanticImageGraphicalizer`
 accepts local image paths, identifies foreground regions, persists crops,
 analyzes them against an image ontology, and extracts document-level relations.
@@ -141,6 +143,12 @@ embeddings are requested. To use OpenAI embeddings, inject
 For image crops, install `.[image-embeddings]` and call
 `SemanticImageGraphicalizer.compute_part_embeddings(graphs)` to attach local
 EmbeddingGemma 2 vectors to the saved image-part records.
+
+Text chunk processing can opt into bounded concurrency with
+`max_concurrent_parts`; it defaults to `1` to preserve sequential request
+behavior. Image crop analysis defaults to four concurrent requests and caps
+inventory at 32 regions. Set `max_concurrent_analyses` and `max_regions` on
+`SemanticImageGraphicalizer` to adjust those limits.
 
 For a compact dynamic layout, reduce the link distance and component spacing;
 set `charge_strength=0` to disable charge repulsion entirely:

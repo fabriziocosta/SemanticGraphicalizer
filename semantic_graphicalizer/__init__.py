@@ -53,10 +53,10 @@ from .text_embeddings import (
 )
 from .pipeline import (
     ConservativeEntityResolver,
-    InputPartitioner,
     ParagraphWindowSegmenter,
     SemanticPipeline,
 )
+from .part_pipeline import InputPartitioner
 from .transformer import SemanticGraphicalizer, SemanticTextGraphicalizer
 from .abstract_graph import (
     InterpretationMode,

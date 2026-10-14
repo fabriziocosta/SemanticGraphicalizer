@@ -26,11 +26,11 @@ from .model import (
 from .pipeline import (
     ConservativeEntityResolver,
     EntityResolver,
-    InputPartitioner,
     ParagraphWindowSegmenter,
     Segmenter,
     SemanticPipeline,
 )
+from .part_pipeline import InputPartitioner
 from .visualization import display_graph
 from .text_embeddings import (
     DEFAULT_EMBEDDINGGEMMA2_MODEL,
@@ -140,6 +140,7 @@ class SemanticTextGraphicalizer(BaseEstimator, TransformerMixin):
         embedding_prompt_name: str = "Document",
         max_chunk_chars: int = 4000,
         chunk_overlap: int = 0,
+        max_concurrent_parts: int = 1,
         max_retries: int = 2,
         retry_backoff: float = 0.25,
         document_id_fn: Callable[[str, int], str] | None = None,
@@ -151,6 +152,12 @@ class SemanticTextGraphicalizer(BaseEstimator, TransformerMixin):
             raise TypeError("document_id_fn must be callable")
         if not isinstance(embedding_model, str) or not embedding_model.strip():
             raise ValueError("embedding_model must be a non-empty string")
+        if (
+            isinstance(max_concurrent_parts, bool)
+            or not isinstance(max_concurrent_parts, int)
+            or max_concurrent_parts < 1
+        ):
+            raise ValueError("max_concurrent_parts must be a positive integer")
         if embedding_dim is not None and (
             isinstance(embedding_dim, bool)
             or not isinstance(embedding_dim, int)
@@ -202,6 +209,7 @@ class SemanticTextGraphicalizer(BaseEstimator, TransformerMixin):
         self.embedding_prompt_name = embedding_prompt_name
         self.max_chunk_chars = max_chunk_chars
         self.chunk_overlap = chunk_overlap
+        self.max_concurrent_parts = max_concurrent_parts
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff
         self.document_id_fn = document_id_fn
@@ -232,6 +240,7 @@ class SemanticTextGraphicalizer(BaseEstimator, TransformerMixin):
             self.verbose,
             self.max_retries,
             self.retry_backoff,
+            self.max_concurrent_parts,
         )
         if self.verbose:
             print(
