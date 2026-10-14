@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "semantic-graphicalizer"
 version = "0.1.0"
-description = "Ontology-guided text graphicalization as a scikit-learn transformer"
+description = "Ontology-guided graphicalization for text and image inputs"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -21,6 +21,9 @@ dev = [
     "matplotlib>=3.8",
     "nbclient>=0.8",
     "pytest>=8.0",
+]
+image = [
+    "Pillow>=10.0",
 ]
 abstractgraph = [
     "abstractgraph @ git+https://github.com/fabriziocosta/abstractgraph.git",

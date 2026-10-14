@@ -1,6 +1,7 @@
 # Semantic Graphicalizer
 
-Ontology-guided text graphicalization exposed as a scikit-learn-compatible transformer.
+Ontology-guided graphicalization for text and image inputs, exposed through
+scikit-learn-compatible transformers.
 
 Project design notes, the Aesop experiment plan, and the implementation
 scratchpad are collected in the [docs folder](docs/README.md).
@@ -19,19 +20,21 @@ graphs = graphicalizer.transform(["The fox met the crow."])
 
 ## Modality extension contracts
 
-`DocumentInput` and `Part` provide modality-neutral contracts for future
-input adapters. Parts carry a modality, content or a media reference, a source
-locator, and metadata. The built-in paragraph segmenter exposes
+`DocumentInput` and `Part` provide modality-neutral contracts for input
+adapters. Parts carry a modality, content or a media reference, a source
+locator, and metadata. The paragraph segmenter exposes
 `partition(DocumentInput)` and still supports its original `segment(...)`
-method. `SemanticGraphicalizer.transform(...)` and the default pipeline remain
-text workflows; image loading, region detection, and vision analysis are not
-included yet.
+method. `SemanticGraphicalizer` remains the text workflow. `ImageGraphicalizer`
+accepts local image paths, identifies foreground regions, persists crops,
+analyzes them against an image ontology, and extracts document-level relations.
+See the [image domain guide](domains/image/README.md) and its
+[scene-to-graph notebook](domains/image/notebooks/scene_to_graph.ipynb).
 
 Model providers can implement `generate_request(ModelRequest)` to receive
-structured requests with separate text or non-text evidence. Existing
+structured requests with separate text or image evidence. Existing
 `generate(stage=..., prompt=..., schema=..., context=...)` clients and
-callables continue to work through a text-only adapter. That adapter rejects
-non-text evidence so a media payload cannot be silently discarded.
+callables continue to work through a text-only adapter for the text workflow.
+The image workflow requires a request client that accepts image evidence.
 
 When `model` is omitted, the package uses OpenAI `gpt-4.1-mini` through the
 Responses API. Set `OPENAI_API_KEY` in the environment before running it:
@@ -41,6 +44,9 @@ export OPENAI_API_KEY="your_api_key_here"
 ```
 
 Pass `model=...` to inject a fake client for tests or another provider.
+`ImageGraphicalizer` defaults to `gpt-5.6-terra` while preserving the text
+default above. Install Pillow for image loading and crop persistence with
+`pip install -e '.[image]'`.
 
 Every semantic object is an Entity node. Atomic nodes have `relation=None`;
 reified relation nodes have a configured `relation` and outgoing

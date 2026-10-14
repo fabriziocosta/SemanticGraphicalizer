@@ -1,0 +1,80 @@
+name: generic-visual
+version: "1.0"
+terms:
+  - id: scene
+    description: The full image scene and its background context.
+  - id: visual_entity
+    description: A visible object, person, animal, plant, structure, or other foreground entity.
+argument_roles:
+  - id: container
+    description: The whole or spatial context containing another entity.
+  - id: item
+    description: The entity contained by, located in, or related to another entity.
+  - id: subject
+    description: The first entity in a spatial or interaction relation.
+  - id: object
+    description: The second entity in a spatial or interaction relation.
+relations:
+  contains:
+    description: One entity or scene contains another entity.
+    arguments:
+      container:
+        cardinality: 1
+        allowed_types: [scene, visual_entity]
+      item:
+        cardinality: 1..n
+        allowed_types: [visual_entity]
+  near:
+    description: Two entities are close to one another.
+    arguments:
+      subject:
+        cardinality: 1
+        allowed_types: [visual_entity]
+      object:
+        cardinality: 1
+        allowed_types: [visual_entity]
+  left_of:
+    description: The subject is visually left of the object.
+    arguments:
+      subject:
+        cardinality: 1
+        allowed_types: [visual_entity]
+      object:
+        cardinality: 1
+        allowed_types: [visual_entity]
+  right_of:
+    description: The subject is visually right of the object.
+    arguments:
+      subject:
+        cardinality: 1
+        allowed_types: [visual_entity]
+      object:
+        cardinality: 1
+        allowed_types: [visual_entity]
+  in_front_of:
+    description: The subject appears in front of the object.
+    arguments:
+      subject:
+        cardinality: 1
+        allowed_types: [visual_entity]
+      object:
+        cardinality: 1
+        allowed_types: [visual_entity]
+  behind:
+    description: The subject appears behind the object.
+    arguments:
+      subject:
+        cardinality: 1
+        allowed_types: [visual_entity]
+      object:
+        cardinality: 1
+        allowed_types: [visual_entity]
+  interacting_with:
+    description: The subject visibly interacts with the object.
+    arguments:
+      subject:
+        cardinality: 1
+        allowed_types: [visual_entity]
+      object:
+        cardinality: 1
+        allowed_types: [visual_entity]

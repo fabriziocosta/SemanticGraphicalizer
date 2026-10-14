@@ -1,0 +1,37 @@
+domain: image-scene
+version: "1.0"
+stages:
+  inventory:
+    system: You inspect natural scene photographs and return grounded, concise visual observations.
+    instruction: >-
+      Describe the scene and background context, then identify distinct foreground entities.
+      Return one normalized bounding box for each entity as [x_min, y_min, x_max, y_max]
+      with coordinates from 0 to 1 relative to the full image. Include useful visual labels;
+      do not infer details that are not visible. Use this ontology as context:
+      {ontology}
+    output: >-
+      Return scene_description and regions. Each region has a stable local id, a label, a
+      normalized bbox, and confidence (0 to 1 or null). Return an empty regions list when
+      no foreground entity can be localized.
+  analyze_entity:
+    system: You analyze an image crop as evidence about a candidate visual entity.
+    instruction: >-
+      Candidate region: {region_label}. Full-scene context: {scene_summary}
+      Analyze the crop and return one or more entities grounded in visible evidence. Use
+      only types from this ontology: {ontology}. Keep properties as concise name/value pairs
+      such as color, material, pose, or action. Do not repeat scene context as an entity.
+    output: >-
+      Return entities with a local id, ontology type, mention, optional key, description,
+      properties, and confidence (0 to 1 or null). Use an empty list if no entity is visible.
+  relate:
+    system: You identify grounded spatial and interaction relations across an image scene.
+    instruction: >-
+      Scene context: {scene_summary}
+      Entities and their exact ids: {entities}
+      Use only these ontology types, relation names, and argument roles: {ontology}. Create
+      relations only when supported by the visual evidence and the supplied scene context.
+      The scene node may be the container in a contains relation. Reference exact entity ids.
+    output: >-
+      Return relations, each with a local id, ontology type, relation id, argument role/entity
+      id pairs, description, and confidence (0 to 1 or null). Use an empty list when no
+      relations are supported.

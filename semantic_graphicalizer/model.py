@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import base64
 import json
+import mimetypes
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_IMAGE_MODEL = "gpt-5.6-terra"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 
 
@@ -261,6 +265,71 @@ class OpenAIModelClient:
         if not isinstance(result, Mapping):
             raise ValueError(f"OpenAI returned a non-object JSON result for stage '{stage}'")
         return result
+
+    def generate_request(self, request: ModelRequest) -> Mapping[str, Any]:
+        """Generate structured output from text and/or image evidence."""
+
+        content: list[dict[str, Any]] = [{"type": "input_text", "text": request.prompt}]
+        for item in request.content:
+            if item.modality == "text":
+                if not isinstance(item.value, str):
+                    raise TypeError("text model content must contain a string")
+                content.append({"type": "input_text", "text": item.value})
+            elif item.modality == "image":
+                content.append({
+                    "type": "input_image",
+                    "image_url": self._image_data_url(item),
+                    "detail": item.metadata.get("detail", "auto"),
+                })
+            else:
+                raise TypeError(f"OpenAI Responses adapter does not support '{item.modality}' content")
+        response = self.client.responses.create(
+            model=self.model,
+            input=[{"role": "user", "content": content}],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": f"semantic_graphicalizer_{request.stage}",
+                    "strict": True,
+                    "schema": dict(request.schema),
+                }
+            },
+            store=False,
+            **self.request_options,
+        )
+        output_text = getattr(response, "output_text", None)
+        if not isinstance(output_text, str) or not output_text.strip():
+            output_text = self._nested_output_text(response)
+        if not isinstance(output_text, str) or not output_text.strip():
+            raise ValueError(f"OpenAI returned no structured output for stage '{request.stage}'")
+        try:
+            result = json.loads(output_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"OpenAI returned invalid JSON for stage '{request.stage}'") from exc
+        if not isinstance(result, Mapping):
+            raise ValueError(f"OpenAI returned a non-object JSON result for stage '{request.stage}'")
+        return result
+
+    @staticmethod
+    def _image_data_url(item: ModelContent) -> str:
+        value = item.value
+        if isinstance(value, Path):
+            path = value
+            payload = path.read_bytes()
+            mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+        elif isinstance(value, str):
+            if value.startswith("data:image/") or value.startswith("https://") or value.startswith("http://"):
+                return value
+            path = Path(value)
+            payload = path.read_bytes()
+            mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            payload = bytes(value)
+            mime_type = str(item.metadata.get("mime_type", "image/png"))
+        else:
+            raise TypeError("image model content must be a local path, bytes, or image URL")
+        encoded = base64.b64encode(payload).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
 
     @staticmethod
     def _nested_output_text(response: Any) -> str | None:

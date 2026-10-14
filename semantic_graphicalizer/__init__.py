@@ -19,6 +19,7 @@ from .aesop import (
 )
 from .model import (
     DEFAULT_OPENAI_EMBEDDING_MODEL,
+    DEFAULT_OPENAI_IMAGE_MODEL,
     DEFAULT_OPENAI_MODEL,
     CallableEmbeddingClient,
     CallableModelClient,
@@ -30,6 +31,7 @@ from .model import (
     OpenAIModelClient,
     RequestModelClient,
 )
+from .image import ImageGraphicalizer, ImagePromptConfig, load_image_prompts
 from .pipeline import (
     ConservativeEntityResolver,
     InputPartitioner,
@@ -76,6 +78,7 @@ __all__ = [
     "CallableModelClient",
     "CallableEmbeddingClient",
     "DEFAULT_OPENAI_EMBEDDING_MODEL",
+    "DEFAULT_OPENAI_IMAGE_MODEL",
     "Argument",
     "ArgumentRole",
     "Chunk",
@@ -108,6 +111,8 @@ __all__ = [
     "InterpretationMode",
     "ParallelEdgePolicy",
     "SemanticGraphicalizer",
+    "ImageGraphicalizer",
+    "ImagePromptConfig",
     "semantic_graph_to_abstract_graph",
     "vectorize_abstract_graphs",
     "SemanticPipeline",
@@ -128,4 +133,5 @@ __all__ = [
     "load_ontology",
     "load_aesop_fables",
     "load_prompts",
+    "load_image_prompts",
 ]

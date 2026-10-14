@@ -7,5 +7,7 @@ dist/
 *.egg-info/
 /data/raw/
 /data/processed/
-/domains/text/data/raw/
-/domains/text/data/processed/
+/domains/*/data/raw/**
+/domains/*/data/processed/**
+!/domains/*/data/raw/.gitkeep
+!/domains/*/data/processed/.gitkeep
