@@ -33,8 +33,9 @@ a `visual_entity` fallback, and specific types such as `person`, `animal`,
 `plant`, `vehicle`, `tool`, `building`, `road`, `furniture`, `object`, and
 `landscape_feature`. Office types include `chair`, `desk`, `table`, `monitor`,
 `computer`, `laptop`, `keyboard`, `mouse`, `printer`, `telephone`,
-`filing_cabinet`, `shelf`, `bookshelf`, `whiteboard`, `desk_lamp`, `document`,
-and `office_supply`. It defines containment, spatial, and interaction relations.
+`filing_cabinet`, `shelf`, `bookshelf`, `whiteboard`, `desk_lamp`, `table_lamp`,
+`cup`, `drinking_glass`, `document`, and `office_supply`. It defines containment,
+spatial, and interaction relations.
 
 - `data/raw/` — local inputs or source manifests. Keep private or large files
   out of version control.
@@ -58,3 +59,22 @@ also accepts explicit node IDs through `exclude_nodes`, for example to omit
 the scene node from a graph view. Image overlay labels use separate lines and
 are repositioned to avoid colliding with other labels. OCR, video, and remote
 image loading are not part of this workflow.
+
+### Image part embeddings
+
+Install the local EmbeddingGemma 2 runtime with
+`pip install -e '.[image-embeddings]'`. The model and its weights load only
+when the embedding method is called. After creating graphs, explicitly embed
+their saved region crops:
+
+```python
+embedded_graphs = graphicalizer.compute_part_embeddings(graphs, batch_size=32)
+part = embedded_graphs[0].graph["parts"][0]
+print(part["part_id"], len(part["embedding"]))  # 768 dimensions
+```
+
+Vectors are stored on graph part records with model and crop checksum metadata.
+Entity provenance already contains the matching `part_id`, so consumers can
+resolve an entity to its region vector. Unchanged crops with matching embedding
+settings reuse their saved vectors. The model returns normalized image vectors
+in a shared text and image space; vectors are not attached to entity nodes.

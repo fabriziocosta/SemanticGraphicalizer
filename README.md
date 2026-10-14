@@ -124,6 +124,9 @@ vector = embedded_graphs[0].nodes["some-node"]["embedding"]
 
 The default embedding model is `text-embedding-3-small` and uses the
 OpenAI embeddings endpoint. Set `OPENAI_API_KEY` before requesting embeddings.
+For image crops, install `.[image-embeddings]` and call
+`ImageGraphicalizer.compute_part_embeddings(graphs)` to attach local
+EmbeddingGemma 2 vectors to the saved image-part records.
 
 For a compact dynamic layout, reduce the link distance and component spacing;
 set `charge_strength=0` to disable charge repulsion entirely:

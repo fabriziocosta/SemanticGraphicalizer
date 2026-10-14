@@ -272,7 +272,7 @@ def test_d3_html_has_text_only_nodes_and_gray_thin_edges() -> None:
     assert "drag the background to pan" in html
     assert "temporalArrowId" in html
     assert "causalArrowId" in html
-    assert "legend" in html
+    assert "legend" not in html
     assert "<circle" not in html
 
 

@@ -1,5 +1,5 @@
 name: generic-visual
-version: "1.2"
+version: "1.4"
 terms:
   - id: scene
     description: The full image scene and its background context.
@@ -55,6 +55,12 @@ terms:
     description: A whiteboard or writable presentation board.
   - id: desk_lamp
     description: A small adjustable lamp placed on a desk or work surface.
+  - id: table_lamp
+    description: A portable lamp designed to stand on a table, desk, or other surface.
+  - id: cup
+    description: A small drinking vessel with or without a handle, such as a coffee cup or mug.
+  - id: drinking_glass
+    description: A drinking vessel made of glass or another transparent material.
   - id: document
     description: A visible sheet, folder, notebook, or other office document.
   - id: office_supply
@@ -74,10 +80,10 @@ relations:
     arguments:
       container:
         cardinality: 1
-        allowed_types: [scene, visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature, chair, desk, table, monitor, computer, laptop, keyboard, mouse, printer, telephone, filing_cabinet, shelf, bookshelf, whiteboard, desk_lamp, document, office_supply]
+        allowed_types: [scene, visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature, chair, desk, table, monitor, computer, laptop, keyboard, mouse, printer, telephone, filing_cabinet, shelf, bookshelf, whiteboard, desk_lamp, table_lamp, cup, drinking_glass, document, office_supply]
       item:
         cardinality: 1..n
-        allowed_types: &visual_types [visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature, chair, desk, table, monitor, computer, laptop, keyboard, mouse, printer, telephone, filing_cabinet, shelf, bookshelf, whiteboard, desk_lamp, document, office_supply]
+        allowed_types: &visual_types [visual_entity, person, animal, plant, vehicle, tool, building, road, furniture, object, landscape_feature, chair, desk, table, monitor, computer, laptop, keyboard, mouse, printer, telephone, filing_cabinet, shelf, bookshelf, whiteboard, desk_lamp, table_lamp, cup, drinking_glass, document, office_supply]
   near:
     description: Two entities are close to one another.
     arguments:

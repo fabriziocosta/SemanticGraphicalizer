@@ -25,6 +25,10 @@ dev = [
 image = [
     "Pillow>=10.0",
 ]
+image-embeddings = [
+    "Pillow>=10.0",
+    "sentence-transformers[image]>=6.1.0",
+]
 abstractgraph = [
     "abstractgraph @ git+https://github.com/fabriziocosta/abstractgraph.git",
 ]

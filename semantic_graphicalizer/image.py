@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict
 from hashlib import sha256
 import json
@@ -17,6 +17,13 @@ import yaml
 
 from .config import OntologyConfig, PromptStage, load_ontology
 from .graph import GraphValidationError, materialize_graph
+from .image_embeddings import (
+    DEFAULT_IMAGE_EMBEDDING_MODEL,
+    IMAGE_EMBEDDING_DIMENSIONS,
+    EmbeddingGemma2ImageClient,
+    ImageEmbeddingClient,
+    as_image_embedding_client,
+)
 from .model import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     ModelContent,
@@ -255,6 +262,8 @@ class ImageGraphicalizer:
         model: Any = None,
         *,
         crop_dir: str | Path = Path("domains/image/data/processed/regions"),
+        image_embedder: ImageEmbeddingClient | Callable[[Sequence[str | Path]], Sequence[Sequence[float]]] | None = None,
+        image_embedding_model: str = DEFAULT_IMAGE_EMBEDDING_MODEL,
         scene_type: str = "scene",
         max_retries: int = 2,
         retry_backoff: float = 0.25,
@@ -266,10 +275,14 @@ class ImageGraphicalizer:
             raise ValueError("retry_backoff must be non-negative")
         self.ontology = load_ontology(ontology)
         self.prompts = load_image_prompts(prompts)
+        if not isinstance(image_embedding_model, str) or not image_embedding_model.strip():
+            raise ValueError("image_embedding_model must be a non-empty string")
         if scene_type not in self.ontology.term_ids:
             raise ValueError(f"scene_type '{scene_type}' is not defined by the ontology")
         self.scene_type = scene_type
         self.crop_dir = Path(crop_dir)
+        self.image_embedder = image_embedder
+        self.image_embedding_model = image_embedding_model
         self.max_retries = max_retries
         self.retry_backoff = float(retry_backoff)
         self.verbose = verbose
@@ -745,6 +758,145 @@ class ImageGraphicalizer:
             return []
         seen: dict[str, int] = {}
         return [self._process(path, seen) for path in paths]
+
+    def compute_part_embeddings(
+        self,
+        values: nx.MultiDiGraph | Iterable[nx.MultiDiGraph],
+        *,
+        batch_size: int = 32,
+        skip_matching: bool = True,
+    ) -> list[nx.MultiDiGraph]:
+        """Embed saved image parts and attach vectors to graph part records.
+
+        Graphs are updated in place and returned in input order. The default
+        EmbeddingGemma 2 client and its model weights are loaded only if at
+        least one part needs an embedding. Entity provenance references the
+        vectors through each part's existing ``part_id``.
+        """
+
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        if not isinstance(skip_matching, bool):
+            raise TypeError("skip_matching must be a bool")
+        if isinstance(values, nx.MultiDiGraph):
+            graphs = [values]
+        elif isinstance(values, (str, bytes)):
+            raise TypeError("values must be image graphs or an iterable of image graphs")
+        else:
+            try:
+                graphs = list(values)
+            except TypeError as exc:
+                raise TypeError("values must be image graphs or an iterable of image graphs") from exc
+        if not all(isinstance(graph, nx.MultiDiGraph) for graph in graphs):
+            raise TypeError("values must contain only NetworkX MultiDiGraph objects")
+
+        part_records: list[tuple[nx.MultiDiGraph, dict[str, Any], str, str]] = []
+        for graph in graphs:
+            if graph.graph.get("modality") != "image":
+                raise ValueError("compute_part_embeddings accepts only image graphs")
+            parts = graph.graph.get("parts", [])
+            if not isinstance(parts, list):
+                raise ValueError("image graph metadata 'parts' must be a list")
+            for index, raw_part in enumerate(parts):
+                if not isinstance(raw_part, Mapping):
+                    raise ValueError(f"image graph part {index} must be an object")
+                part = raw_part if isinstance(raw_part, dict) else dict(raw_part)
+                if part is not raw_part:
+                    parts[index] = part
+                part_id = part.get("part_id")
+                if not isinstance(part_id, str) or not part_id:
+                    raise ValueError(f"image graph part {index} is missing a valid part_id")
+                raw_path = part.get("content")
+                if raw_path is None:
+                    metadata = part.get("metadata", {})
+                    raw_path = metadata.get("crop_path") if isinstance(metadata, Mapping) else None
+                if not isinstance(raw_path, (str, Path)) or not str(raw_path):
+                    raise ValueError(f"image graph part {part_id!r} has no saved crop path")
+                crop_path = Path(raw_path)
+                if not crop_path.is_file():
+                    raise ValueError(f"image crop for part {part_id!r} does not exist: {crop_path}")
+                digest = sha256()
+                with crop_path.open("rb") as crop_file:
+                    for chunk in iter(lambda: crop_file.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                part_records.append((graph, part, str(crop_path), digest.hexdigest()))
+
+        if not part_records:
+            return graphs
+
+        raw_client = self.image_embedder
+        if raw_client is None:
+            raw_client = EmbeddingGemma2ImageClient(self.image_embedding_model)
+            self.image_embedder = raw_client
+        client = as_image_embedding_client(raw_client)
+        configured_model_id = getattr(client, "model_id", None)
+        model_id = (
+            configured_model_id
+            if isinstance(configured_model_id, str) and configured_model_id.strip()
+            else f"{type(client).__module__}.{type(client).__qualname__}"
+        )
+        config = {
+            "model": model_id,
+            "dimension": IMAGE_EMBEDDING_DIMENSIONS,
+            "normalized": True,
+            "precision_policy": getattr(client, "precision_policy", "client-managed"),
+            "input": "image-part-v1",
+        }
+        config_hash = sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
+
+        pending: list[tuple[nx.MultiDiGraph, dict[str, Any], str, str]] = []
+        for graph, part, crop_path, crop_sha256 in part_records:
+            if skip_matching:
+                vector = part.get("embedding")
+                metadata = part.get("embedding_metadata")
+                if (
+                    isinstance(vector, list)
+                    and len(vector) == IMAGE_EMBEDDING_DIMENSIONS
+                    and isinstance(metadata, Mapping)
+                    and metadata.get("crop_sha256") == crop_sha256
+                    and metadata.get("config_hash") == config_hash
+                    and all(isinstance(value, (int, float)) and math.isfinite(value) for value in vector)
+                ):
+                    continue
+            pending.append((graph, part, crop_path, crop_sha256))
+
+        for start in range(0, len(pending), batch_size):
+            batch = pending[start:start + batch_size]
+            vectors = client.embed_images([crop_path for _graph, _part, crop_path, _digest in batch], batch_size=batch_size)
+            if hasattr(vectors, "tolist"):
+                vectors = vectors.tolist()
+            if not isinstance(vectors, (list, tuple)) or len(vectors) != len(batch):
+                raise ValueError("image_embedder returned a different number of vectors than image parts")
+            validated: list[list[float]] = []
+            for index, raw_vector in enumerate(vectors):
+                if hasattr(raw_vector, "tolist"):
+                    raw_vector = raw_vector.tolist()
+                if not isinstance(raw_vector, (list, tuple)):
+                    raise ValueError(f"image_embedder returned an invalid vector for part '{batch[index][1]['part_id']}'")
+                try:
+                    vector = [float(value) for value in raw_vector]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"image_embedder returned an invalid vector for part '{batch[index][1]['part_id']}'"
+                    ) from exc
+                if len(vector) != IMAGE_EMBEDDING_DIMENSIONS or not all(math.isfinite(value) for value in vector):
+                    raise ValueError(
+                        f"image_embedder vectors must contain {IMAGE_EMBEDDING_DIMENSIONS} finite values; "
+                        f"part '{batch[index][1]['part_id']}' returned {len(vector)}"
+                    )
+                norm = math.hypot(*vector)
+                if norm == 0:
+                    raise ValueError(f"image_embedder returned a zero vector for part '{batch[index][1]['part_id']}'")
+                validated.append([value / norm for value in vector])
+
+            for (graph, part, _crop_path, crop_sha256), vector in zip(batch, validated):
+                part["embedding"] = vector
+                part["embedding_metadata"] = {
+                    **config,
+                    "config_hash": config_hash,
+                    "crop_sha256": crop_sha256,
+                }
+        return graphs
 
     def display_on_image(self, graph: nx.MultiDiGraph, image: str | Path | Any | None = None, **kwargs: Any) -> Any:
         """Render graph nodes at entity box centers over the source image."""
