@@ -15,8 +15,8 @@ import networkx as nx
 from .config import OntologyConfig, PromptConfig
 from .exceptions import StageOutputError
 from .graph import GraphValidationError, materialize_graph
-from .model import ModelClient, as_model_client
-from .types import Argument, Chunk, Entity, NormalizedText, RelationInstance, StageStat, Summary
+from .model import ModelRequest, ModelContent, RequestModelClient, as_model_client
+from .types import Argument, Chunk, DocumentInput, Entity, NormalizedText, Part, RelationInstance, StageStat, Summary
 
 
 _T = TypeVar("_T")
@@ -24,6 +24,12 @@ _T = TypeVar("_T")
 
 class Segmenter(Protocol):
     def segment(self, document_id: str, text: str) -> list[Chunk]: ...
+
+
+class InputPartitioner(Protocol):
+    """Split modality-specific document inputs into located generic parts."""
+
+    def partition(self, document: DocumentInput) -> list[Part]: ...
 
 
 class EntityResolver(Protocol):
@@ -95,6 +101,13 @@ class ParagraphWindowSegmenter:
                 pending_start, pending_end = start, end
         flush()
         return chunks
+
+    def partition(self, document: DocumentInput) -> list[Part]:
+        """Expose paragraph chunks through the modality-neutral contract."""
+
+        if document.modality != "text" or not isinstance(document.content, str):
+            raise TypeError("ParagraphWindowSegmenter only accepts text documents")
+        return [Part.from_chunk(chunk) for chunk in self.segment(document.document_id, document.content)]
 
 
 class ConservativeEntityResolver:
@@ -194,10 +207,10 @@ def _format_elapsed(elapsed_seconds: float) -> str:
 
 @dataclass
 class SemanticPipeline:
-    model: ModelClient
+    model: RequestModelClient
     ontology: OntologyConfig
     prompts: PromptConfig
-    segmenter: Segmenter
+    segmenter: Segmenter | InputPartitioner
     resolver: EntityResolver
     verbose: bool = True
     max_retries: int = 2
@@ -223,7 +236,15 @@ class SemanticPipeline:
         schema = _schemas(self.ontology)[stage]
         for attempt in range(self.max_retries + 1):
             try:
-                response = self.model.generate(stage=stage, prompt=prompt, schema=deepcopy(schema), context={"document_id": chunk.document_id, "chunk_id": chunk.chunk_id})
+                response = self.model.generate_request(
+                    ModelRequest(
+                        stage=stage,
+                        prompt=prompt,
+                        schema=deepcopy(schema),
+                        context={"document_id": chunk.document_id, "chunk_id": chunk.chunk_id},
+                        content=(ModelContent("text", values.get("text", "")),),
+                    )
+                )
                 return _as_mapping(response, stage, chunk.document_id, chunk.chunk_id)
             except Exception as exc:
                 if attempt == self.max_retries or not _retryable(exc):
@@ -500,7 +521,15 @@ class SemanticPipeline:
         total = time.perf_counter()
         stats: list[StageStat] = []
         started = time.perf_counter()
-        chunks = self.segmenter.segment(document_id, text)
+        document = DocumentInput(document_id, "text", text)
+        partition = getattr(self.segmenter, "partition", None)
+        if callable(partition):
+            parts = partition(document)
+            chunks = [part.as_text_chunk() for part in parts]
+        else:
+            # Keep third-party segmenters that implement the original API
+            # working while they migrate to InputPartitioner.
+            chunks = self.segmenter.segment(document_id, text)
         self._stat(stats, document_id, "segment", started, 1, len(chunks), details={"input_chars": len(text), "chunk_chars": sum(len(chunk.text) for chunk in chunks)})
         summaries: list[Summary] = []
         normalized: list[NormalizedText] = []

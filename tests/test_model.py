@@ -7,6 +7,10 @@ from semantic_graphicalizer.model import (
     DEFAULT_OPENAI_MODEL,
     OpenAIEmbeddingClient,
     OpenAIModelClient,
+    LegacyModelClientAdapter,
+    ModelContent,
+    ModelRequest,
+    as_model_client,
 )
 
 
@@ -95,3 +99,64 @@ def test_openai_embedding_client_protects_request_fields() -> None:
 
     with pytest.raises(ValueError, match="cannot override"):
         OpenAIEmbeddingClient(client=client, request_options={"input": []})
+
+
+def test_legacy_model_adapter_preserves_text_call_shape() -> None:
+    class Legacy:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"ok": True}
+
+    legacy = Legacy()
+    client = as_model_client(legacy)
+    request = ModelRequest(
+        stage="extract",
+        prompt="Extract entities.",
+        schema={"type": "object"},
+        context={"document_id": "d"},
+        content=(ModelContent("text", "The source."),),
+    )
+
+    assert isinstance(client, LegacyModelClientAdapter)
+    assert client.generate_request(request) == {"ok": True}
+    assert legacy.calls == [{
+        "stage": "extract",
+        "prompt": "Extract entities.",
+        "schema": {"type": "object"},
+        "context": {"document_id": "d"},
+    }]
+
+
+def test_request_model_client_retains_non_text_evidence() -> None:
+    class RequestClient:
+        def __init__(self):
+            self.request = None
+
+        def generate_request(self, request):
+            self.request = request
+            return {"ok": True}
+
+    provider = RequestClient()
+    client = as_model_client(provider)
+    evidence = ModelContent("image", "images/scene.png", {"region": [0.1, 0.2, 0.7, 0.8]})
+    request = ModelRequest("analyze", "Describe the region.", {}, content=(evidence,))
+
+    assert client.generate_request(request) == {"ok": True}
+    assert provider.request is request
+    assert provider.request.content == (evidence,)
+
+
+def test_legacy_model_adapter_rejects_non_text_evidence() -> None:
+    class Legacy:
+        def generate(self, **kwargs):
+            del kwargs
+            return {}
+
+    client = as_model_client(Legacy())
+    request = ModelRequest("analyze", "Inspect image.", {}, content=(ModelContent("image", "scene.png"),))
+
+    with pytest.raises(TypeError, match="cannot consume non-text content"):
+        client.generate_request(request)

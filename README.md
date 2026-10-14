@@ -2,6 +2,9 @@
 
 Ontology-guided text graphicalization exposed as a scikit-learn-compatible transformer.
 
+Project design notes, the Aesop experiment plan, and the implementation
+scratchpad are collected in the [docs folder](docs/README.md).
+
 The transformer accepts complete documents and returns one `networkx.MultiDiGraph` per document. Call `transform` directly; the configured pipeline is initialized on its first use. Model execution is intentionally provider-neutral: pass an object with `generate(...)` or a compatible callable.
 
 ```python
@@ -13,6 +16,22 @@ graphicalizer = SemanticGraphicalizer(
 )
 graphs = graphicalizer.transform(["The fox met the crow."])
 ```
+
+## Modality extension contracts
+
+`DocumentInput` and `Part` provide modality-neutral contracts for future
+input adapters. Parts carry a modality, content or a media reference, a source
+locator, and metadata. The built-in paragraph segmenter exposes
+`partition(DocumentInput)` and still supports its original `segment(...)`
+method. `SemanticGraphicalizer.transform(...)` and the default pipeline remain
+text workflows; image loading, region detection, and vision analysis are not
+included yet.
+
+Model providers can implement `generate_request(ModelRequest)` to receive
+structured requests with separate text or non-text evidence. Existing
+`generate(stage=..., prompt=..., schema=..., context=...)` clients and
+callables continue to work through a text-only adapter. That adapter rejects
+non-text evidence so a media payload cannot be silently discarded.
 
 When `model` is omitted, the package uses OpenAI `gpt-4.1-mini` through the
 Responses API. Set `OPENAI_API_KEY` in the environment before running it:

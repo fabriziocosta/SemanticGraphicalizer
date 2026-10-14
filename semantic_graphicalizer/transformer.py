@@ -26,6 +26,7 @@ from .model import (
 from .pipeline import (
     ConservativeEntityResolver,
     EntityResolver,
+    InputPartitioner,
     ParagraphWindowSegmenter,
     Segmenter,
     SemanticPipeline,
@@ -132,7 +133,7 @@ class SemanticGraphicalizer(BaseEstimator, TransformerMixin):
         max_retries: int = 2,
         retry_backoff: float = 0.25,
         document_id_fn: Callable[[str, int], str] | None = None,
-        segmenter: Segmenter | None = None,
+        segmenter: Segmenter | InputPartitioner | None = None,
         entity_resolver: EntityResolver | None = None,
         verbose: bool = True,
     ) -> None:

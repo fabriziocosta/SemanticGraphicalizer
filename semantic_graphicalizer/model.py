@@ -4,11 +4,43 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import json
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+
+
+@dataclass(frozen=True)
+class ModelContent:
+    """Evidence supplied to a model, such as text or a media reference."""
+
+    modality: str
+    value: Any
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ModelRequest:
+    """A provider-neutral structured generation request.
+
+    ``prompt`` carries workflow instructions and rendered text context;
+    ``content`` carries the source evidence without requiring it to be
+    flattened into a text prompt.
+    """
+
+    stage: str
+    prompt: str
+    schema: Mapping[str, Any]
+    context: Mapping[str, Any] = field(default_factory=dict)
+    content: tuple[ModelContent, ...] = ()
+
+
+class RequestModelClient(Protocol):
+    """Model interface for clients that consume modality-neutral requests."""
+
+    def generate_request(self, request: ModelRequest) -> Mapping[str, Any]: ...
 
 
 class ModelClient(Protocol):
@@ -53,6 +85,29 @@ class CallableModelClient:
         context: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         return self.function(stage=stage, prompt=prompt, schema=schema, context=context)
+
+
+class LegacyModelClientAdapter:
+    """Adapt the existing text-only ``generate`` interface to requests."""
+
+    def __init__(self, client: Any) -> None:
+        if not callable(getattr(client, "generate", None)):
+            raise TypeError("client must expose generate(...)")
+        self.client = client
+
+    def generate_request(self, request: ModelRequest) -> Mapping[str, Any]:
+        unsupported = [item.modality for item in request.content if item.modality != "text"]
+        if unsupported:
+            raise TypeError(
+                "legacy text model clients cannot consume non-text content; "
+                "provide a client implementing generate_request(request)"
+            )
+        return self.client.generate(
+            stage=request.stage,
+            prompt=request.prompt,
+            schema=request.schema,
+            context=request.context,
+        )
 
 
 class CallableEmbeddingClient:
@@ -225,12 +280,16 @@ class OpenAIModelClient:
         return None
 
 
-def as_model_client(model: ModelClient | Callable[..., Mapping[str, Any]]) -> ModelClient:
-    if hasattr(model, "generate"):
+def as_model_client(
+    model: RequestModelClient | ModelClient | Callable[..., Mapping[str, Any]],
+) -> RequestModelClient:
+    if callable(getattr(model, "generate_request", None)):
         return model  # type: ignore[return-value]
+    if callable(getattr(model, "generate", None)):
+        return LegacyModelClientAdapter(model)
     if callable(model):
-        return CallableModelClient(model)
-    raise TypeError("model must expose generate(...) or be callable")
+        return LegacyModelClientAdapter(CallableModelClient(model))
+    raise TypeError("model must expose generate_request(...), generate(...), or be callable")
 
 
 def as_embedding_client(

@@ -4,6 +4,8 @@ import networkx as nx
 import pytest
 
 from semantic_graphicalizer import (
+    DocumentInput,
+    Part,
     SemanticGraphicalizer,
     graph_from_dict,
     graph_to_dict,
@@ -238,6 +240,34 @@ def test_segmenter_and_resolver() -> None:
     assert all(len(chunk.text) <= 10 for chunk in chunks)
     assert ConservativeEntityResolver().resolve("Animal", "The Fox's") == "animal::fox"
     assert _format_elapsed(61) == "1.0 min"
+
+
+def test_paragraph_segmenter_exposes_located_modality_neutral_parts() -> None:
+    document = DocumentInput("doc", "text", "First paragraph.\n\nSecond paragraph.")
+    parts = ParagraphWindowSegmenter(max_chars=20).partition(document)
+
+    assert all(isinstance(part, Part) for part in parts)
+    assert [part.modality for part in parts] == ["text", "text"]
+    assert [part.content for part in parts] == ["First paragraph.", "Second paragraph."]
+    assert parts[0].source_locator == {"start_char": 0, "end_char": 16}
+    assert parts[1].source_locator == {"start_char": 18, "end_char": 35}
+    assert [part.as_text_chunk().chunk_id for part in parts] == ["doc:chunk-0", "doc:chunk-1"]
+
+
+def test_generic_part_can_carry_a_non_text_reference() -> None:
+    part = Part(
+        document_id="image-doc",
+        part_id="image-doc:region-0",
+        modality="image",
+        content="assets/scene.png",
+        source_locator={"bbox": [0.1, 0.2, 0.7, 0.8]},
+        metadata={"role": "foreground"},
+    )
+
+    assert part.content == "assets/scene.png"
+    assert part.source_locator["bbox"] == [0.1, 0.2, 0.7, 0.8]
+    with pytest.raises(TypeError, match="only text parts"):
+        part.as_text_chunk()
 
 
 def test_model_references_to_missing_entities_are_dropped() -> None:
