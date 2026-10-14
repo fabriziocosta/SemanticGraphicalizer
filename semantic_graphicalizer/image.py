@@ -24,6 +24,7 @@ from .image_embeddings import (
     EmbeddingGemma2ImageClient,
     ImageEmbeddingClient,
     as_image_embedding_client,
+    random_project_embeddings,
 )
 from .model import (
     DEFAULT_OPENAI_IMAGE_MODEL,
@@ -262,9 +263,13 @@ class ImageGraphicalizer:
         prompts: str | Path | Mapping[str, Any] | ImagePromptConfig = DEFAULT_IMAGE_PROMPTS,
         model: Any = None,
         *,
+        vlm_model: str = DEFAULT_OPENAI_IMAGE_MODEL,
         crop_dir: str | Path = Path("domains/image/data/processed/regions"),
         image_embedder: ImageEmbeddingClient | Callable[[Sequence[str | Path], int], Sequence[Sequence[float]]] | None = None,
         image_embedding_model: str = DEFAULT_IMAGE_EMBEDDING_MODEL,
+        image_embedding_dim: int = IMAGE_EMBEDDING_DIMENSIONS,
+        image_embedding_source_dim: int | None = None,
+        image_embedding_projection_seed: int = 17,
         scene_type: str = "scene",
         max_retries: int = 2,
         retry_backoff: float = 0.25,
@@ -276,14 +281,47 @@ class ImageGraphicalizer:
             raise ValueError("retry_backoff must be non-negative")
         self.ontology = load_ontology(ontology)
         self.prompts = load_image_prompts(prompts)
+        if not isinstance(vlm_model, str) or not vlm_model.strip():
+            raise ValueError("vlm_model must be a non-empty string")
         if not isinstance(image_embedding_model, str) or not image_embedding_model.strip():
             raise ValueError("image_embedding_model must be a non-empty string")
+        if (
+            isinstance(image_embedding_dim, bool)
+            or not isinstance(image_embedding_dim, int)
+            or image_embedding_dim < 1
+        ):
+            raise ValueError("image_embedding_dim must be a positive integer")
+        if image_embedding_source_dim is not None and (
+            isinstance(image_embedding_source_dim, bool)
+            or not isinstance(image_embedding_source_dim, int)
+            or image_embedding_source_dim not in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
+        ):
+            raise ValueError(
+                f"image_embedding_source_dim must be None or one of {SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS}"
+            )
+        configured_source_dim = image_embedding_source_dim or (
+            image_embedding_dim
+            if image_embedding_dim in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
+            else IMAGE_EMBEDDING_DIMENSIONS
+        )
+        if image_embedding_dim > configured_source_dim:
+            raise ValueError("image_embedding_dim cannot exceed image_embedding_source_dim")
+        if (
+            isinstance(image_embedding_projection_seed, bool)
+            or not isinstance(image_embedding_projection_seed, int)
+            or image_embedding_projection_seed < 0
+        ):
+            raise ValueError("image_embedding_projection_seed must be a non-negative integer")
         if scene_type not in self.ontology.term_ids:
             raise ValueError(f"scene_type '{scene_type}' is not defined by the ontology")
         self.scene_type = scene_type
         self.crop_dir = Path(crop_dir)
+        self.vlm_model = vlm_model
         self.image_embedder = image_embedder
         self.image_embedding_model = image_embedding_model
+        self.image_embedding_dim = image_embedding_dim
+        self.image_embedding_source_dim = image_embedding_source_dim
+        self.image_embedding_projection_seed = image_embedding_projection_seed
         self.max_retries = max_retries
         self.retry_backoff = float(retry_backoff)
         self.verbose = verbose
@@ -299,7 +337,7 @@ class ImageGraphicalizer:
 
     def _run_request(self, request: ModelRequest) -> Mapping[str, Any]:
         if self.model is None:
-            self.model = as_model_client(OpenAIModelClient(model=DEFAULT_OPENAI_IMAGE_MODEL))
+            self.model = as_model_client(OpenAIModelClient(model=self.vlm_model))
         for attempt in range(self.max_retries + 1):
             try:
                 result = self.model.generate_request(request)
@@ -765,29 +803,52 @@ class ImageGraphicalizer:
         values: nx.MultiDiGraph | Iterable[nx.MultiDiGraph],
         *,
         batch_size: int = 32,
-        embedding_dim: int = IMAGE_EMBEDDING_DIMENSIONS,
+        embedding_dim: int | None = None,
+        source_embedding_dim: int | None = None,
         skip_matching: bool = True,
     ) -> list[nx.MultiDiGraph]:
         """Embed saved image parts and attach vectors to graph part records.
 
-        Graphs are updated in place and returned in input order. The default
-        EmbeddingGemma 2 client and its model weights are loaded only if at
-        least one part needs an embedding. Entity provenance references the
-        vectors through each part's existing ``part_id``.
+        Graphs are updated in place and returned in input order. The configured
+        image embedder and output dimension from ``__init__`` are used unless
+        overridden for this call. Output dimensions supported natively by
+        EmbeddingGemma 2 use its Matryoshka truncation. Other smaller dimensions
+        are produced with a seeded Gaussian random projection from
+        ``source_embedding_dim`` (or 768 by default). The default client and
+        model weights load only if a part needs an embedding. Entity provenance
+        references vectors through each part's existing ``part_id``.
         """
 
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
         if not isinstance(skip_matching, bool):
             raise TypeError("skip_matching must be a bool")
+        if embedding_dim is None:
+            embedding_dim = self.image_embedding_dim
         if (
             isinstance(embedding_dim, bool)
             or not isinstance(embedding_dim, int)
-            or embedding_dim not in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
+            or embedding_dim < 1
+        ):
+            raise ValueError("embedding_dim must be a positive integer")
+        if source_embedding_dim is None:
+            source_embedding_dim = self.image_embedding_source_dim
+        if source_embedding_dim is None:
+            source_embedding_dim = (
+                embedding_dim
+                if embedding_dim in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
+                else IMAGE_EMBEDDING_DIMENSIONS
+            )
+        if (
+            isinstance(source_embedding_dim, bool)
+            or not isinstance(source_embedding_dim, int)
+            or source_embedding_dim not in SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS
         ):
             raise ValueError(
-                f"embedding_dim must be one of {SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS}"
+                f"source_embedding_dim must be one of {SUPPORTED_IMAGE_EMBEDDING_DIMENSIONS}"
             )
+        if embedding_dim > source_embedding_dim:
+            raise ValueError("embedding_dim cannot exceed source_embedding_dim")
         if isinstance(values, nx.MultiDiGraph):
             graphs = [values]
         elif isinstance(values, (str, bytes)):
@@ -848,9 +909,20 @@ class ImageGraphicalizer:
         config = {
             "model": model_id,
             "dimension": embedding_dim,
+            "source_dimension": source_embedding_dim,
             "normalized": True,
             "precision_policy": getattr(client, "precision_policy", "client-managed"),
             "input": "image-part-v1",
+            "projection_method": (
+                "GaussianRandomProjection"
+                if embedding_dim != source_embedding_dim
+                else None
+            ),
+            "projection_random_seed": (
+                self.image_embedding_projection_seed
+                if embedding_dim != source_embedding_dim
+                else None
+            ),
         }
         config_hash = sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -875,7 +947,7 @@ class ImageGraphicalizer:
             vectors = client.embed_images(
                 [crop_path for _graph, _part, crop_path, _digest in batch],
                 batch_size=batch_size,
-                embedding_dim=embedding_dim,
+                embedding_dim=source_embedding_dim,
             )
             if hasattr(vectors, "tolist"):
                 vectors = vectors.tolist()
@@ -893,15 +965,22 @@ class ImageGraphicalizer:
                     raise ValueError(
                         f"image_embedder returned an invalid vector for part '{batch[index][1]['part_id']}'"
                     ) from exc
-                if len(vector) != embedding_dim or not all(math.isfinite(value) for value in vector):
+                if len(vector) != source_embedding_dim or not all(math.isfinite(value) for value in vector):
                     raise ValueError(
-                        f"image_embedder vectors must contain {embedding_dim} finite values; "
+                        f"image_embedder vectors must contain {source_embedding_dim} finite values; "
                         f"part '{batch[index][1]['part_id']}' returned {len(vector)}"
                     )
                 norm = math.hypot(*vector)
                 if norm == 0:
                     raise ValueError(f"image_embedder returned a zero vector for part '{batch[index][1]['part_id']}'")
                 validated.append([value / norm for value in vector])
+
+            if embedding_dim != source_embedding_dim:
+                validated = random_project_embeddings(
+                    validated,
+                    output_dim=embedding_dim,
+                    random_seed=self.image_embedding_projection_seed,
+                )
 
             for (graph, part, _crop_path, crop_sha256), vector in zip(batch, validated):
                 part["embedding"] = vector

@@ -9,15 +9,16 @@ canonical NetworkX `MultiDiGraph` representation. It uses three model stages:
 3. Extract ontology-defined relations across entities and the scene node.
 
 Install the optional image dependency with `pip install -e '.[image]'`. The
-default model client uses OpenAI Responses and reads `OPENAI_API_KEY` from the
-environment. Pass a request client implementing `generate_request(request)` to
-use another provider or a local/fake model.
+default VLM is `gpt-5.6-terra`; the OpenAI Responses client reads
+`OPENAI_API_KEY` from the environment. Set `vlm_model` to select another
+OpenAI model. Pass a request client via `model` implementing
+`generate_request(request)` to use another provider or a local/fake VLM.
 
 ```python
 from pathlib import Path
 from semantic_graphicalizer import ImageGraphicalizer
 
-graphicalizer = ImageGraphicalizer(verbose=True)
+graphicalizer = ImageGraphicalizer(vlm_model="gpt-5.6-terra", verbose=True)
 graphs = graphicalizer.transform(Path("domains/image/data/raw/scene.jpg"))
 graph = graphs[0]
 ```
@@ -65,16 +66,32 @@ image loading are not part of this workflow.
 Install the local EmbeddingGemma 2 runtime with
 `pip install -e '.[image-embeddings]'`. The model and its weights load only
 when the embedding method is called. After creating graphs, explicitly embed
-their saved region crops:
+their saved region crops. Choose the embedder and output dimensions when
+constructing `ImageGraphicalizer`; the defaults are EmbeddingGemma 2 and 768
+dimensions. Set `image_embedding_model` to choose a Sentence Transformers model,
+or pass a custom client as `image_embedder`. Native output dimensions
+(`128`, `256`, `512`, `768`) use the model's Matryoshka truncation. Any smaller
+positive target can instead be created with a reproducible Gaussian random
+projection from `image_embedding_source_dim`:
 
 ```python
+graphicalizer = ImageGraphicalizer(
+    image_embedding_model="google/embeddinggemma-2",
+    image_embedding_dim=10,
+    image_embedding_source_dim=128,
+)
 embedded_graphs = graphicalizer.compute_part_embeddings(graphs, batch_size=32)
 part = embedded_graphs[0].graph["parts"][0]
-print(part["part_id"], len(part["embedding"]))  # 768 dimensions by default
+print(part["part_id"], len(part["embedding"]))  # 10 dimensions in this setup
 ```
 
-Request a Matryoshka dimension with `embedding_dim=128`, `256`, `512`, or
-`768`. The model truncates the vector and normalizes it for cosine similarity.
+Set `image_embedding_dim` to the desired positive output dimension. For native
+Matryoshka dimensions, `image_embedding_source_dim` can be left unset. For
+other dimensions, set the source to a supported model dimension greater than
+the target. The optional `embedding_dim` argument on
+`compute_part_embeddings` overrides the target for a one-off call. Projected
+vectors are normalized for cosine similarity; the random seed is recorded in
+their metadata.
 
 Vectors are stored on graph part records with model and crop checksum metadata.
 Entity provenance already contains the matching `part_id`, so consumers can
